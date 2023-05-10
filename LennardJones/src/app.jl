@@ -129,7 +129,7 @@ function main()
 
         Label(settings[9, 1], halign = :left, fontsize = 20, text = "Simulation Controls", tellwidth = false)
         sliderconf = (
-            (label = "time step", range = 0:1e-5:1e-3, startvalue = 1e-4) => (val -> (dt[] = val)),
+            (label = "time step", range = range(0, sqrt(1e-3), length = 1000).^2, startvalue = 1e-4) => (val -> (dt[] = val)),
         )
         on.(last.(sliderconf), getfield.(SliderGrid(settings[10,1], first.(sliderconf)...).sliders, :value))
     end
@@ -259,7 +259,10 @@ function main()
                         lj.vs .+= mousestrength[] / 10 * dt[] .* (Ref(mousepos) .- lj.ps) ./ (0.05 .+ norm.(Ref(mousepos) .- lj.ps)).^2 ./ lj.ms
                     end
                     if interactions[:slow]
-                        lj.vs .*= ifelse.(norm.(lj.ps .- Ref(mousepos)) .< 0.5, 0.99, 1.0)
+                        lj.vs .*= 1 .- 100dt[] .* exp.(-2 .* norm.(lj.ps .- Ref(mousepos)).^2)
+                    end
+                    if interactions[:stir]
+                        lj.vs .+= mousestrength[] / 10 * dt[] .* exp.(-20 .* norm.(lj.ps .- Ref(mousepos)).^2) .* Ref(SA[0 1; -1 1]) .* (Ref(mousepos) .- lj.ps)
                     end
 
                     if time_ns() - lastaction > 1e8
@@ -317,6 +320,7 @@ function main()
                 interactions[:pullall] = is_mouseinside(main_axis) && ispressed(main_axis, Mouse.middle)
                 interactions[:delete] = is_mouseinside(main_axis) && ispressed(main_axis, Keyboard.x)
                 interactions[:slow] = is_mouseinside(main_axis) && ispressed(main_axis, Keyboard.s)
+                interactions[:stir] = is_mouseinside(main_axis) && ispressed(main_axis, Keyboard.a)
                 mousepos = SVec2(mouseposition(main_axis))
 
                 if !running[] || !events(fig).window_open[]

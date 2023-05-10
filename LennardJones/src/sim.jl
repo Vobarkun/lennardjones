@@ -8,26 +8,26 @@ Base.@kwdef mutable struct LJ
     
     bonds::Vector{Tuple{Int64, Int64, Float64, Float64}} = []
     angles::Vector{Tuple{Int64, Int64, Int64, Float64, Float64}} = []
-    mols::Vector{Int} = []
+    bonded::Matrix{Bool} = []
 
     nbs::Vector{Tuple{Int64, Int64}} = []
     nblist::Vector{Vector{Int64}} = []
     lastnbps::Vector{SVector{2, Float64}} = []
     
-    σ::Float64 = 0.1
+    σ::Float64 = 0.05
     ε::Float64 = 1.0
     swstrength::Float64 = 0.0
     swangle::Float64 = 120.0
-    coulomb::Float64 = 0.0
-    bondk::Float64 = 1.0
+    coulomb::Float64 = 1.0
+    bondk::Float64 = 5.0
     bondl::Float64 = 1.0
     wallr::Float64 = 1.0
     wallk::Float64 = 1e6
     g::Float64 = 0.0
     E::Float64 = 0.0
     
-    T::Float64 = 1.0
-    ts::Float64 = 0.0
+    T::Float64 = 0.0
+    ts::Float64 = 1.0
     
     nsteps::Int = 0
 end
@@ -35,15 +35,39 @@ end
 function randb(r)
     r * SA[2rand() - 1, 2rand() - 1]
 end
+randb(lj::LJ) = randb(lj.wallr)
 
 function randb(r, n)
     [randb(r) for i in 1:n]
 end
+randb(lj::LJ, n) = randb(lj.wallr, n)
 
 function LJ(N::Int; kwargs...)
     wallr = get(kwargs, :wallr, 1.0)
-    ps = randb(wallr, N)
-    LJ(; ps = ps, vs = zero(ps), fs = zero(ps), ms = ones(N), cs = zeros(N), σs = ones(N), mols = collect(1:N), kwargs...)
+    σ = get(kwargs, :σ, 0.05)
+    ps = randb(wallr, 1)
+    for i in 1:10000
+        length(ps) >= N && break
+        p = randb(wallr)
+        if all(norm(p - q) > σ for q in ps)
+            push!(ps, p)
+        end
+    end
+    LJ(; ps = ps, vs = zero(ps), fs = zero(ps), ms = ones(N), cs = zeros(N), σs = ones(N), bonded = fill(false, N, N), kwargs...)
+end
+
+function updatebonded!(lj::LJ)
+    lj.bonded = fill(false, length(lj), length(lj))
+    for (i, j, k, l) in lj.bonds
+        lj.bonded[i,j] = lj.bonded[j, i] = true 
+    end
+end
+
+function Base.push!(lj::LJ, p; m = 1.0, c = 0.0, σ = 1.0)
+    N = length(lj)
+    push!(lj.ps, p); push!(lj.vs, zero(p)); push!(lj.fs, zero(p))
+    push!(lj.ms, m); push!(lj.cs, c); push!(lj.σs, σ)
+    updatebonded!(lj)
 end
 
 function Base.push!(lj::LJ; ps, ms = nothing, cs = nothing, σs = nothing, bonds = [], angles = [])
@@ -54,30 +78,18 @@ function Base.push!(lj::LJ; ps, ms = nothing, cs = nothing, σs = nothing, bonds
     append!(lj.ms, isnothing(ms) ? ones(length(ps)) : ms)
     append!(lj.cs, isnothing(cs) ? zeros(length(ps)) : cs)
     append!(lj.σs, isnothing(σs) ? ones(length(ps)) : σs)
-    append!(lj.mols, fill(maximum(lj.mols, init = 0) + 1, length(ps)))
     append!(lj.bonds, [(i + N, j + N, k, l) for (i, j, k, l) in bonds])
     append!(lj.angles, [(i + N, j + N, k + N, kα, α) for (i, j, k, kα, α) in angles])
-end
-
-function Base.append!(lj::LJ; ps, ms = nothing, cs = nothing, σs = nothing, bonds = [], angles = [])
-    N = length(lj)
-    append!(lj.ps, ps)
-    append!(lj.vs, zero(ps))
-    append!(lj.fs, zero(ps))
-    append!(lj.ms, isnothing(ms) ? ones(length(ps)) : ms)
-    append!(lj.cs, isnothing(cs) ? zeros(length(ps)) : cs)
-    append!(lj.σs, isnothing(σs) ? ones(length(ps)) : σs)
-    append!(lj.mols, collect(maximum(lj.mols, init = 0) + 1:maximum(lj.mols, init = 0) + length(ps)))
-    append!(lj.bonds, [(i + N, j + N, k, l) for (i, j, k, l) in bonds])
-    append!(lj.angles, [(i + N, j + N, k + N, kα, α) for (i, j, k, kα, α) in angles])
+    updatebonded!(lj)
+    lj
 end
 
 function Base.deleteat!(lj::LJ, ind)
     deleteat!(lj.ps, ind); deleteat!(lj.vs, ind); deleteat!(lj.fs, ind)
     deleteat!(lj.ms, ind); deleteat!(lj.cs, ind); deleteat!(lj.σs, ind)
-    deleteat!(lj.mols, ind);
     lj.bonds = [(i - (i > ind), j - (j > ind), k, l) for (i, j, k, l) in lj.bonds if i != ind && j != ind]
-    lj.angles = [(i - (i > ind), j - (j > ind), k - (k > ind), kα, α) for (i, j, k, kα, α) in lj.bonds if i != ind && j != ind && k != ind]
+    lj.angles = [(i - (i > ind), j - (j > ind), k - (k > ind), kα, α) for (i, j, k, kα, α) in lj.angles if i != ind && j != ind && k != ind]
+    updatebonded!(lj)
     lj.nbs .= Ref((0, 0))
     lj.lastnbps .*= 0
     fill!.(lj.nblist, 0)
@@ -87,12 +99,54 @@ end
 function Base.empty!(lj::LJ)
     empty!(lj.ps); empty!(lj.vs); empty!(lj.fs)
     empty!(lj.ms); empty!(lj.cs); empty!(lj.σs)
-    empty!(lj.mols); empty!(lj.bonds); empty!(lj.angles); empty!(lj.lastnbps); empty!(lj.nbs); empty!(lj.nblist)
+    empty!(lj.bonds); empty!(lj.angles); empty!(lj.lastnbps); empty!(lj.nbs); empty!(lj.nblist)
+    updatebonded!(lj)
     lj
 end
 
 function Base.length(lj::LJ)
     length(lj.ps)
+end
+
+function pushfree!(lj, N = 1; ps = [SA[0.0,0.0]], kwargs...)
+    ps .-= Ref(mean(ps))
+    for i in 1:N
+        qs = placefree(lj, ps)
+        if !isnothing(qs)
+            push!(lj; ps = qs, kwargs...)
+        end
+    end
+end
+
+function placefree(lj::LJ, ps; r = NaN, ntries = 100)
+    r = ifelse(isnan(r), lj.σ, r)
+    for i in 1:ntries
+        p = randfree(lj, r = r)
+        ϕ = 2pi * rand()
+        qs = Ref(SA[cos(ϕ) sin(ϕ); -sin(ϕ) cos(ϕ)]) .* ps .+ Ref(p)
+        if all(all(abs.(q) .< lj.wallr) for q in qs) && all(norm(p - q) > r for p in lj.ps for q in qs)
+            return qs
+        end
+    end
+    return nothing
+end
+
+function randfree(lj::LJ; r = NaN, ntries = 10000)
+    length(lj) == 0 && return randb(lj)
+    r = ifelse(isnan(r), lj.σ, r)
+    dmin = Inf
+    pmin = SA[0.0,0.0]
+    for i in 1:ntries
+        p = randb(lj)
+        d = minimum(norm(p - q) for q in lj.ps)
+        d = min(d, minimum(lj.wallr .- abs.(p)) + lj.σ)
+        d > r && return p
+        if d < dmin
+            dmin = d
+            pmin = p
+        end
+    end
+    return pmin
 end
 
 function ljf(σ, ε, r; b = 1.0)
@@ -117,6 +171,9 @@ function smoothstep(x, x1, x2, y1 = 0, y2 = 1)
     y1 * (1 - s) + y2 * s
 end
 
+function getcutoff(lj::LJ)
+    ifelse(any(c != 0 for c in lj.cs), 10lj.σ, 5lj.σ)
+end
 
 function swh(x1, y1, x2, y2, a, θ)
     r1 = sqrt(x1^2 + y1^2); r2 = sqrt(x2^2 + y2^2)
@@ -151,7 +208,7 @@ function swpotential(r1, r2, r3, a, θ)
 end
 
 function forces!(lj::LJ; cutoff = Inf)
-    (; ps, vs, ms, fs, cs, nbs, bonds, angles, σ, σs, ε, coulomb, wallr, wallk, bondk, bondl, g, E, nblist, swstrength, swangle) = lj
+    (; ps, vs, ms, fs, cs, nbs, bonds, angles, σ, σs, ε, coulomb, wallr, wallk, bondk, bondl, g, E, nblist, swstrength, swangle, bonded) = lj
 
     fill!(fs, zero(eltype(fs)))
 
@@ -173,7 +230,7 @@ function forces!(lj::LJ; cutoff = Inf)
     end
 
     for (i, j) in nbs
-        if i > 0 && j > 0 && lj.mols[i] != lj.mols[j]
+        if i > 0 && j > 0 && !bonded[i,j]
             v = ps[j] - ps[i]
             nv = norm(v)
             if nv < cutoff
@@ -291,7 +348,7 @@ function neighbors!(lj::LJ; cutoff = 0.0)
 end
 
 function ensureNeighbors!(lj::LJ; forced = false)
-    cutoff = ifelse(any(c != 0 for c in lj.cs), 10lj.σ, 5lj.σ)
+    cutoff = getcutoff(lj)
     if length(lj.lastnbps) != length(lj.ps)
         lj.lastnbps = zero(lj.ps)
     end
@@ -307,17 +364,10 @@ function step!(lj::LJ; dt = 1e-3)
     lj.vs .*= min.(1, 1000 ./ norm.(lj.vs))
 
     lj.ps .+= 0.5dt .* lj.vs
-
-    cutoff = ifelse(any(c != 0 for c in lj.cs), 10lj.σ, 5lj.σ)
     ensureNeighbors!(lj)
-    forces!(lj, cutoff = cutoff / 2)
-
+    forces!(lj, cutoff = getcutoff(lj) / 2)
     lj.vs .+= dt .* lj.fs ./ lj.ms
-    
-    # lj.vs .*= ifelse.(norm.(lj.ps) .< 0.02, 0.99, 1.0)
-
     lj.ps .+= 0.5dt .* lj.vs
-    
     lj.nsteps += 1
 end
 
@@ -343,11 +393,11 @@ function temperature(lj::LJ)
 end
 
 function potential(lj::LJ; cutoff = Inf)
-    (; ps, vs, ms, fs, cs, nbs, bonds, angles, σ, σs, ε, coulomb, wallr, wallk, bondk, bondl, g, E, nblist, swstrength, swangle) = lj
+    (; ps, vs, ms, fs, cs, nbs, bonds, angles, σ, σs, ε, coulomb, wallr, wallk, bondk, bondl, g, E, nblist, swstrength, swangle, bonded) = lj
     
     E = 0.0
     for (i, j) in nbs
-        if i > 0 && lj.mols[i] != lj.mols[j]
+        if i > 0 && !bonded[i,j]
             v = ps[j] - ps[i]
             nv = norm(v)
             if nv < cutoff
@@ -381,17 +431,19 @@ function potential(lj::LJ; cutoff = Inf)
     E / length(lj)
 end
 
-function potentialPerParticle(lj::LJ; cutoff = Inf)
-    (; ps, vs, ms, fs, cs, nbs, bonds, angles, σ, σs, ε, coulomb, wallr, wallk, bondk, bondl, g, E, nblist, swstrength, swangle) = lj
+function potentialPerParticle(lj::LJ)
+    (; ps, vs, ms, fs, cs, nbs, bonds, angles, σ, σs, ε, coulomb, wallr, wallk, bondk, bondl, g, E, nblist, swstrength, swangle, bonded) = lj
+
+    cutoff = getcutoff(lj)
     
     Es = zeros(length(lj))
     for (i, j) in nbs
-        if i > 0 && j > 0 && lj.mols[i] != lj.mols[j]
+        if i > 0 && j > 0 && !bonded[i,j]
             v = ps[j] - ps[i]
             nv = norm(v)
             if nv < cutoff
                 E = ljp(σ * (σs[i] + σs[j]) / 2, ε, v) - ljp(σ * (σs[i] + σs[j]) / 2, ε, cutoff)
-                E += coulomb * cs[i] * cs[j] * (1 / norm(v) - 1 / cutoff - 0.5norm(v)^2)
+                E += coulomb * cs[i] * cs[j] * (1 / norm(v) - 1 / cutoff - 0.5nv^2)
                 Es[i] += E; Es[j] += E
             end
         end

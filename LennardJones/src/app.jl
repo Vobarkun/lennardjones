@@ -10,6 +10,18 @@ function maptounitrange(X)
     (X .- min) ./ (max - min)
 end
 
+function updateevery(innode, dt)
+    outnode = Observable(innode[])
+    t = Observable(time())
+    on(innode) do val
+        if time() - t[] > dt
+            t[] = time()
+            outnode[] = val
+        end
+    end
+    outnode
+end
+
 function main()
     lj = LJ(500)
     step!(lj, dt = 0.0)
@@ -31,7 +43,7 @@ function main()
     on(n -> (@lock lk lj.vs .*= 0), freezebutton.clicks)
     
     Label(menugrid[1,3], " Right click:", fontsize = 20, justification = :right)
-    particlemenu = Menu(menugrid[1,4], options = ["default", "heavy", "positive", "negative", "polar pair", "neutral pair"], width = 120)
+    particlemenu = Menu(menugrid[1,4], options = ["default", "heavy", "very heavy", "positive", "negative", "polar pair", "neutral pair"], width = 120)
     colgap!(menugrid, 3, 10)
     
     Label(menugrid[1,5], " Color:", fontsize = 20, justification = :right)
@@ -75,6 +87,7 @@ function main()
     linesegments!(main_axis, lift(lj -> lj.ps[[b[i] for b in lj.bonds for i in 1:2]], node), strokewidth = lift(lj -> 0.1lj.σ, node), color = :grey)
     main_plot = scatter!(main_axis, pnode, markersize = markersize, strokewidth = 1, color = color, markerspace = :data, colorrange = colorrange)
 
+
     # settings
     begin 
         function setnumber(val)
@@ -104,7 +117,7 @@ function main()
         Label(settings[3, 1], halign = :left, fontsize = 20, text = "Thermostat settings", tellwidth = false)
         sliderconf = (
             (label = "temperature", range = 0:0.001:1, startvalue = lj.T) => val -> (lj.T = val),
-            (label = "coupling", range = (0:0.01:10).^3, startvalue = lj.ts) => (val -> (lj.ts = val)),
+            (label = "strength", range = (0:0.01:10).^3, startvalue = lj.ts) => (val -> (lj.ts = val)),
         )
         on.(last.(sliderconf), getfield.(SliderGrid(settings[4,1], first.(sliderconf)...).sliders, :value))
 
@@ -126,6 +139,7 @@ function main()
             (label = "interactive", range = 1:1:1000, startvalue = 500) => (val -> (mousestrength[] = val)),
         )
         on.(last.(sliderconf), getfield.(SliderGrid(settings[8,1], first.(sliderconf)...).sliders, :value))
+        mousestrengthslider = contents(settings[8,1])[1].sliders[3]
 
         Label(settings[9, 1], halign = :left, fontsize = 20, text = "Simulation Controls", tellwidth = false)
         sliderconf = (
@@ -133,6 +147,7 @@ function main()
         )
         on.(last.(sliderconf), getfield.(SliderGrid(settings[10,1], first.(sliderconf)...).sliders, :value))
     end
+
 
     #presets
     begin
@@ -237,13 +252,24 @@ function main()
     scatter!(main_axis, lift(lj -> lj.ps[min(length(lj.ps), interactionIndex[]):min(length(lj.ps), interactionIndex[])], node), markersize = lift(lj -> 1.05lj.σ, node), 
         markerspace = :data, color = lift(lj -> ifelse(ispressed(main_axis, Mouse.left) && is_mouseinside(main_axis), :red, :transparent), node))
 
+    scrollnode = Observable(0.0)
+    on(updateevery(scrollnode, 0.05)) do val
+        set_close_to!(mousestrengthslider, round(mousestrengthslider.value[] + 10val, digits = -1))
+        scrollnode.val = 0.0
+    end 
+    register_interaction!(main_axis, :scroll) do event::ScrollEvent, axis
+        scrollnode[] += event.y
+    end
+
+
     
-    running = Ref(false)
+    running = Observable(false)
     interactions::Dict{Symbol, Bool} = Dict(:pullsingle => false, :spawn => false, :pullall => false, :delete => false, :slow => false)
     mousepos::SVec2 = SA[0.0,0.0]
     
     function runfunc()
-        lastaction = time_ns()
+        lastaction = time()
+        sleep(1e-3)
         while true
             try
                 t = time_ns()
@@ -258,14 +284,21 @@ function main()
                     if interactions[:pullall]
                         lj.vs .+= mousestrength[] / 10 * dt[] .* (Ref(mousepos) .- lj.ps) ./ (0.05 .+ norm.(Ref(mousepos) .- lj.ps)).^2 ./ lj.ms
                     end
-                    if interactions[:slow]
-                        lj.vs .*= 1 .- 100dt[] .* exp.(-2 .* norm.(lj.ps .- Ref(mousepos)).^2)
+                    if interactions[:pushall]
+                        lj.vs .+= mousestrength[] * dt[] .* exp.(-20 .* norm.(lj.ps .- Ref(mousepos)).^2) .* (lj.ps .- Ref(mousepos))
                     end
-                    if interactions[:stir]
-                        lj.vs .+= mousestrength[] / 10 * dt[] .* exp.(-20 .* norm.(lj.ps .- Ref(mousepos)).^2) .* Ref(SA[0 1; -1 1]) .* (Ref(mousepos) .- lj.ps)
+                    if interactions[:cool]
+                        lj.vs .*= 1 .- (0.2mousestrength[] * dt[]) .* exp.(-10 .* norm.(lj.ps .- Ref(mousepos)).^2)
+                    end
+                    if interactions[:heat]
+                        lj.vs .+= 2mousestrength[] * dt[] .* exp.(-100 .* norm.(lj.ps .- Ref(mousepos)).^2) .* randn.(SVec2)
                     end
 
-                    if time_ns() - lastaction > 1e8
+                    if interactions[:stir]
+                        lj.vs .+= mousestrength[] / 5 * dt[] .* exp.(-20 .* norm.(lj.ps .- Ref(mousepos)).^2) .* Ref(SA[0.7 1; -1 0.7]) .* (Ref(mousepos) .- lj.ps)
+                    end
+
+                    if time() - lastaction > 0.05
                         if interactions[:spawn]
                             p = mousepos
                             if length(lj) < maxN && minimum(norm.(Ref(p) .- lj.ps)) > lj.σ
@@ -277,6 +310,8 @@ function main()
                                     push!(lj, ps = [p], cs = [-1], σs = [2])
                                 elseif particlemenu.selection[] == "heavy" && minimum(norm.(Ref(p) .- lj.ps)) > sqrt(10) * lj.σ
                                     push!(lj, ps = [p], ms = [100], σs = [sqrt(10)])
+                                elseif particlemenu.selection[] == "very heavy" && minimum(norm.(Ref(p) .- lj.ps)) > sqrt(10) * lj.σ
+                                    push!(lj, ps = [p], ms = [10000], σs = [sqrt(10)])
                                 elseif particlemenu.selection[] == "polar pair" && length(lj) < maxN - 1
                                     d = normalize(randn(SVec2)) * lj.σ / 2
                                     push!(lj, ps = [p + d, p - d], cs = [-0.3, 0.3], ms = [2, 2], bonds = [(1, 2, 10000.0, 0.05)])
@@ -285,12 +320,12 @@ function main()
                                     push!(lj, ps = [p + d, p - d], cs = [0, 0], ms = [2, 2], bonds = [(1, 2, 10000.0, 0.05)])
                                 end
                             end
+                            lastaction = time()
                         end
                         if interactions[:delete] && length(lj) > 1
                             deleteat!(lj, argmin(norm.(lj.ps .- Ref(mousepos))))
-                            interactions[:delete] = false
+                            lastaction = time()
                         end
-                        lastaction = time_ns()
                     end
                 end
                 
@@ -310,7 +345,6 @@ function main()
     end
         
     function renderfunc()
-        lastplaced = now()
         for i in 1:100000000
             try
                 node[] = ensureNeighbors!(deepcopy(lj), forced = false)
@@ -318,8 +352,10 @@ function main()
                 interactions[:pullsingle] = is_mouseinside(main_axis) && ispressed(main_axis, Mouse.left)
                 interactions[:spawn] = is_mouseinside(main_axis) && ispressed(main_axis, Mouse.right)
                 interactions[:pullall] = is_mouseinside(main_axis) && ispressed(main_axis, Mouse.middle)
+                interactions[:pushall] = is_mouseinside(main_axis) && ispressed(main_axis, Keyboard.c)
                 interactions[:delete] = is_mouseinside(main_axis) && ispressed(main_axis, Keyboard.x)
-                interactions[:slow] = is_mouseinside(main_axis) && ispressed(main_axis, Keyboard.s)
+                interactions[:cool] = is_mouseinside(main_axis) && ispressed(main_axis, Keyboard.s)
+                interactions[:heat] = is_mouseinside(main_axis) && ispressed(main_axis, Keyboard.d)
                 interactions[:stir] = is_mouseinside(main_axis) && ispressed(main_axis, Keyboard.a)
                 mousepos = SVec2(mouseposition(main_axis))
 
@@ -348,5 +384,5 @@ function main()
     end
 
     display(fig)
-    fig, main_plot
+    fig, main_plot, node
 end

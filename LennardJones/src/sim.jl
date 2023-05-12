@@ -352,7 +352,7 @@ function ensureNeighbors!(lj::LJ; forced = false)
     if length(lj.lastnbps) != length(lj.ps)
         lj.lastnbps = zero(lj.ps)
     end
-    if forced || maximum(norm.(lj.lastnbps .- lj.ps)) > cutoff / 4
+    if forced || maximum(norm.(lj.lastnbps .- lj.ps), init = 0.0) > cutoff / 4
         neighbors!(lj, cutoff = cutoff)
         lj.lastnbps .= lj.ps
     end
@@ -372,6 +372,7 @@ function step!(lj::LJ; dt = 1e-3)
 end
 
 function thermostat!(lj::LJ; dt = 1e-3)
+    lj.vs .+= 1e-100 .* randn.(SVec2)
     T = temperature(lj)
     dT = dt * lj.ts * (lj.T - T)
     lj.vs .*= sqrt((T + dT) / T)

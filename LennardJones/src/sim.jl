@@ -400,7 +400,7 @@ function potential(lj::LJ)
 
     E = 0.0
     for (i, j) in nbs
-        if i > 0 && !bonded[i,j]
+        if i > 0 && j > 0 && !bonded[i,j]
             v = ps[j] - ps[i]
             nv = norm(v)
             if nv < cutoff

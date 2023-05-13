@@ -28,7 +28,7 @@ function main()
     lk = ReentrantLock()
 
     fig = Figure(resolution = (3200,1800), figure_padding = 20)
-    main_axis = Axis(fig[1,1], aspect = DataAspect())
+    main_axis::Axis = Axis(fig[1,1], aspect = DataAspect())
     xlims!(main_axis, -1.03, 1.03); ylims!(main_axis, -1.03, 1.03); hidedecorations!(main_axis)
     remove_interactions!(main_axis)
 
@@ -38,16 +38,16 @@ function main()
 
     menugrid = rightarea[2,1] = GridLayout(tellwidth=false, halign = :left)
     
-    startbutton = Button(menugrid[1,1], label = "Start", width = 120)
-    freezebutton = Button(menugrid[1,2], label = "Freeze", width = 80)
+    startbutton::Button = Button(menugrid[1,1], label = "Start", width = 120)
+    freezebutton::Button = Button(menugrid[1,2], label = "Freeze", width = 80)
     on(n -> (@lock lk lj.vs .*= 0), freezebutton.clicks)
     
     Label(menugrid[1,3], " Right click:", fontsize = 20, justification = :right)
-    particlemenu = Menu(menugrid[1,4], options = ["default", "heavy", "very heavy", "positive", "negative", "polar pair", "neutral pair"], width = 120)
+    particlemenu::Menu = Menu(menugrid[1,4], options = ["default", "heavy", "very heavy", "positive", "negative", "polar pair", "neutral pair"], width = 120)
     colgap!(menugrid, 3, 10)
     
     Label(menugrid[1,5], " Color:", fontsize = 20, justification = :right)
-    colormenu = Menu(menugrid[1,6], options = ["potential", "velocity", "charge", "nothing"], width = 120)
+    colormenu::Menu = Menu(menugrid[1,6], options = ["potential", "velocity", "charge", "nothing"], width = 120)
     colgap!(menugrid, 5, 10)
 
 
@@ -85,7 +85,7 @@ function main()
     colorrange[] = extrema(color[])
 
     linesegments!(main_axis, lift(lj -> lj.ps[[b[i] for b in lj.bonds for i in 1:2]], node), strokewidth = lift(lj -> 0.1lj.σ, node), color = :grey)
-    main_plot = scatter!(main_axis, pnode, markersize = markersize, strokewidth = 1, color = color, markerspace = :data, colorrange = colorrange)
+    main_plot::Scatter{Tuple{Vector{Point{2, Float32}}}} = scatter!(main_axis, pnode, markersize = markersize, strokewidth = 1, color = color, markerspace = :data, colormap = :isoluminant_cm_70_c39_n256, colorrange = colorrange)
 
 
     # settings
@@ -139,7 +139,7 @@ function main()
             (label = "interactive", range = 1:1:1000, startvalue = 500) => (val -> (mousestrength[] = val)),
         )
         on.(last.(sliderconf), getfield.(SliderGrid(settings[8,1], first.(sliderconf)...).sliders, :value))
-        mousestrengthslider = contents(settings[8,1])[1].sliders[3]
+        mousestrengthslider::Slider = contents(settings[8,1])[1].sliders[3]
 
         Label(settings[9, 1], halign = :left, fontsize = 20, text = "Simulation Controls", tellwidth = false)
         sliderconf = (
@@ -199,15 +199,18 @@ function main()
 
     # plots
     begin
+        histsteps = 1000
         Label(plotgrid[1, 1], "Temperature", rotation = pi/2, tellheight = false, fontsize = 20)
-        temperatures = Observable(fill(NaN, 10000))
-        temperature_axis = Axis(plotgrid[1,2], ylabelsize = 20)
-        lines!(temperature_axis, -9999:1:0, temperatures)
+        temperatures = Observable(fill(NaN, histsteps))
+        temperature_axis::Axis = Axis(plotgrid[1,2], ylabelsize = 20)
+        hlines!(temperature_axis, [0, 0.1], color = :transparent)
+        lines!(temperature_axis, -histsteps+1:1:0, temperatures)
     
         Label(plotgrid[2, 1], "Potential energy", rotation = pi/2, tellheight = false, fontsize = 20)
-        potentials = Observable(fill(NaN, 10000))
-        potential_axis = Axis(plotgrid[2,2], ylabelsize = 20)
-        lines!(potential_axis, -9999:1:0, potentials)
+        potentials = Observable(fill(NaN, histsteps))
+        potential_axis::Axis = Axis(plotgrid[2,2], ylabelsize = 20)
+        hlines!(potential_axis, 0, color = :transparent)
+        lines!(potential_axis, -histsteps+1:1:0, potentials)
 
         Label(plotgrid[3, 1], "Number of neighbors", rotation = pi/2, tellheight = false, fontsize = 20)
         nneighbors = lift(node) do lj
@@ -215,19 +218,19 @@ function main()
             nbs = [first.(nbs); last.(nbs)]
             count.(isequal.(1:length(lj)), Ref(nbs))
         end
-        neighbor_axis = Axis(plotgrid[3,2], xticks = 0:10, yticks = 0:0.2:1, ylabelsize = 20)
+        neighbor_axis::Axis = Axis(plotgrid[3,2], xticks = 0:10, yticks = 0:0.2:1, ylabelsize = 20)
         hist!(neighbor_axis, nneighbors, bins = -0.5:1:11, normalization = :probability)
         hlines!(neighbor_axis, 0.4, color = :transparent)
 
         Label(plotgrid[4, 1], "Distance distribution", rotation = pi/2, tellheight = false, fontsize = 20)
         distances = lift(lj -> [norm(lj.ps[i] - lj.ps[j]) / lj.σ for (i, j) in lj.nbs if i != 0], node)
-        distance_axis = Axis(plotgrid[4,2], xticks = MultiplesTicks(6, 1, "σ"), ylabelsize = 20)
+        distance_axis::Axis = Axis(plotgrid[4,2], xticks = MultiplesTicks(6, 1, "σ"), ylabelsize = 20)
         hist!(distance_axis, distances, bins = lift(lj -> 0:0.05:5, node), normalization = :probability)
         hlines!(distance_axis, 0.15, color = :transparent)
 
         on(node) do lj
-            temperatures[] = [temperatures[][2:end]; temperature(lj)]
-            potentials[] = [potentials[][2:end]; potential(lj, cutoff = 2.5lj.σ)]
+            T = temperature(lj); T != temperatures[][end] && (temperatures[] = [temperatures[][2:end]; temperature(lj)])
+            V = potential(lj); V != potentials[][end] && (potentials[] = [potentials[][2:end]; V])
             autolimits!(temperature_axis); autolimits!(potential_axis); autolimits!(neighbor_axis); autolimits!(distance_axis)
         end    
         
@@ -243,14 +246,26 @@ function main()
 
 
 
+    
+    running = Observable(false)
+    keymap = (
+        :pullsingle => Mouse.left, :spawn => Mouse.right, :pullall => Mouse.middle, :pushall => Keyboard.c,
+        :delete => Keyboard.x, :cool => Keyboard.s, :heat => Keyboard.d, :stir => Keyboard.a,
+    )
+    interactions = Dict(first.(keymap) .=> false)
+    mousepos = Observable(SA[0.0,0.0])
+
     interactionIndex = Observable(1)
     on(events(main_axis).mousebutton) do event
         if event.button == Mouse.left && event.action == Mouse.press
             interactionIndex[] = argmin(norm.(lj.ps .- Ref(mouseposition(main_axis))))
         end
     end
-    scatter!(main_axis, lift(lj -> lj.ps[min(length(lj.ps), interactionIndex[]):min(length(lj.ps), interactionIndex[])], node), markersize = lift(lj -> 1.05lj.σ, node), 
-        markerspace = :data, color = lift(lj -> ifelse(ispressed(main_axis, Mouse.left) && is_mouseinside(main_axis), :red, :transparent), node))
+    scatter!(main_axis, 
+        lift(lj -> (i = clamp(interactionIndex[], 1, length(lj)); lj.ps[i:i]), node), 
+        markersize = lift(lj -> 1.05lj.σ, node), markerspace = :data, 
+        color = lift(lj -> ifelse(interactions[:pullsingle], :red, :transparent), node)
+    )
 
     scrollnode = Observable(0.0)
     on(updateevery(scrollnode, 0.05)) do val
@@ -260,16 +275,8 @@ function main()
     register_interaction!(main_axis, :scroll) do event::ScrollEvent, axis
         scrollnode[] += event.y
     end
-
-
-    
-    running = Observable(false)
-    interactions::Dict{Symbol, Bool} = Dict(:pullsingle => false, :spawn => false, :pullall => false, :delete => false, :slow => false)
-    mousepos::SVec2 = SA[0.0,0.0]
     
     function runfunc()
-        lastaction = time()
-        sleep(1e-3)
         while true
             try
                 t = time_ns()
@@ -279,53 +286,22 @@ function main()
                     thermostat!(lj, dt = dt[])
 
                     if interactions[:pullsingle] && interactionIndex[] <= length(lj)
-                        lj.vs[interactionIndex[]] += mousestrength[] * dt[] * (mousepos - lj.ps[interactionIndex[]]) / lj.ms[interactionIndex[]]
+                        lj.vs[interactionIndex[]] += mousestrength[] * dt[] * (mousepos[] - lj.ps[interactionIndex[]]) / lj.ms[interactionIndex[]]
                     end
                     if interactions[:pullall]
-                        lj.vs .+= mousestrength[] / 10 * dt[] .* (Ref(mousepos) .- lj.ps) ./ (0.05 .+ norm.(Ref(mousepos) .- lj.ps)).^2 ./ lj.ms
+                        lj.vs .+= mousestrength[] / 10 * dt[] .* (Ref(mousepos[]) .- lj.ps) ./ (0.05 .+ norm.(Ref(mousepos[]) .- lj.ps)).^2 ./ lj.ms
                     end
                     if interactions[:pushall]
-                        lj.vs .+= mousestrength[] * dt[] .* exp.(-20 .* norm.(lj.ps .- Ref(mousepos)).^2) .* (lj.ps .- Ref(mousepos))
+                        lj.vs .+= mousestrength[] * dt[] .* exp.(-20 .* norm.(lj.ps .- Ref(mousepos[])).^2) .* (lj.ps .- Ref(mousepos[]))
                     end
                     if interactions[:cool]
-                        lj.vs .*= 1 .- (0.2mousestrength[] * dt[]) .* exp.(-10 .* norm.(lj.ps .- Ref(mousepos)).^2)
+                        lj.vs .*= 1 .- (0.2mousestrength[] * dt[]) .* exp.(-10 .* norm.(lj.ps .- Ref(mousepos[])).^2)
                     end
                     if interactions[:heat]
-                        lj.vs .+= 2mousestrength[] * dt[] .* exp.(-100 .* norm.(lj.ps .- Ref(mousepos)).^2) .* randn.(SVec2)
+                        lj.vs .+= 2mousestrength[] * dt[] .* exp.(-100 .* norm.(lj.ps .- Ref(mousepos[])).^2) .* randn.(SVec2)
                     end
-
                     if interactions[:stir]
-                        lj.vs .+= mousestrength[] / 5 * dt[] .* exp.(-20 .* norm.(lj.ps .- Ref(mousepos)).^2) .* Ref(SA[0.7 1; -1 0.7]) .* (Ref(mousepos) .- lj.ps)
-                    end
-
-                    if time() - lastaction > 0.05
-                        if interactions[:spawn]
-                            p = mousepos
-                            if length(lj) < maxN && minimum(norm.(Ref(p) .- lj.ps)) > lj.σ
-                                if particlemenu.selection[] == "default"
-                                    push!(lj, ps = [p])
-                                elseif particlemenu.selection[] == "positive"
-                                    push!(lj, ps = [p], cs = [1], σs = [2])
-                                elseif particlemenu.selection[] == "negative"
-                                    push!(lj, ps = [p], cs = [-1], σs = [2])
-                                elseif particlemenu.selection[] == "heavy" && minimum(norm.(Ref(p) .- lj.ps)) > sqrt(10) * lj.σ
-                                    push!(lj, ps = [p], ms = [100], σs = [sqrt(10)])
-                                elseif particlemenu.selection[] == "very heavy" && minimum(norm.(Ref(p) .- lj.ps)) > sqrt(10) * lj.σ
-                                    push!(lj, ps = [p], ms = [10000], σs = [sqrt(10)])
-                                elseif particlemenu.selection[] == "polar pair" && length(lj) < maxN - 1
-                                    d = normalize(randn(SVec2)) * lj.σ / 2
-                                    push!(lj, ps = [p + d, p - d], cs = [-0.3, 0.3], ms = [2, 2], bonds = [(1, 2, 10000.0, 0.05)])
-                                elseif particlemenu.selection[] == "neutral pair" && length(lj) < maxN - 1
-                                    d = normalize(randn(SVec2)) * lj.σ / 2
-                                    push!(lj, ps = [p + d, p - d], cs = [0, 0], ms = [2, 2], bonds = [(1, 2, 10000.0, 0.05)])
-                                end
-                            end
-                            lastaction = time()
-                        end
-                        if interactions[:delete] && length(lj) > 1
-                            deleteat!(lj, argmin(norm.(lj.ps .- Ref(mousepos))))
-                            lastaction = time()
-                        end
+                        lj.vs .+= mousestrength[] / 5 * dt[] .* exp.(-20 .* norm.(lj.ps .- Ref(mousepos[])).^2) .* Ref(SA[0.7 1; -1 0.7]) .* (Ref(mousepos[]) .- lj.ps)
                     end
                 end
                 
@@ -337,40 +313,68 @@ function main()
                     return
                 end
             catch e
-                stacktrace(catch_backtrace())
                 running[] = false
-                return
+                rethrow(e)
             end
         end
     end
         
-    function renderfunc()
-        for i in 1:100000000
-            try
-                node[] = ensureNeighbors!(deepcopy(lj), forced = false)
+    lastaction = Observable(time())
 
-                interactions[:pullsingle] = is_mouseinside(main_axis) && ispressed(main_axis, Mouse.left)
-                interactions[:spawn] = is_mouseinside(main_axis) && ispressed(main_axis, Mouse.right)
-                interactions[:pullall] = is_mouseinside(main_axis) && ispressed(main_axis, Mouse.middle)
-                interactions[:pushall] = is_mouseinside(main_axis) && ispressed(main_axis, Keyboard.c)
-                interactions[:delete] = is_mouseinside(main_axis) && ispressed(main_axis, Keyboard.x)
-                interactions[:cool] = is_mouseinside(main_axis) && ispressed(main_axis, Keyboard.s)
-                interactions[:heat] = is_mouseinside(main_axis) && ispressed(main_axis, Keyboard.d)
-                interactions[:stir] = is_mouseinside(main_axis) && ispressed(main_axis, Keyboard.a)
-                mousepos = SVec2(mouseposition(main_axis))
+    screen = GLMakie.Screen(renderloop = GLMakie.renderloop, framerate = 120)
+    on(screen.render_tick) do x
+        node[] = ensureNeighbors!(deepcopy(lj))
 
-                if !running[] || !events(fig).window_open[]
-                    running[] = false
-                    startbutton.label = "Start"
-                    return
-                end
-                sleep(0.001)
-                yield()
-            catch e
-                stacktrace(catch_backtrace())
-                running[] = false
-                return
+        for (name, key) in keymap
+            if is_mouseinside(main_axis) || interactions[name]
+                interactions[name] = ispressed(main_axis, key)
             end
+        end
+        mousepos[] = SVec2(mouseposition(main_axis))
+        
+        if time() - lastaction[] > 0.05
+            if interactions[:spawn]
+                lock(lk) do 
+                    p = mousepos[]
+                    if length(lj) < maxN && minimum(norm.(Ref(p) .- lj.ps)) > lj.σ
+                        if particlemenu.selection[] == "default"
+                            push!(lj, ps = [p])
+                        elseif particlemenu.selection[] == "positive"
+                            push!(lj, ps = [p], cs = [1], σs = [2])
+                        elseif particlemenu.selection[] == "negative"
+                            push!(lj, ps = [p], cs = [-1], σs = [2])
+                        elseif particlemenu.selection[] == "heavy" && minimum(norm.(Ref(p) .- lj.ps)) > sqrt(10) * lj.σ
+                            push!(lj, ps = [p], ms = [100], σs = [sqrt(10)])
+                        elseif particlemenu.selection[] == "very heavy" && minimum(norm.(Ref(p) .- lj.ps)) > sqrt(10) * lj.σ
+                            push!(lj, ps = [p], ms = [10000], σs = [sqrt(10)])
+                        elseif particlemenu.selection[] == "polar pair" && length(lj) < maxN - 1
+                            d = normalize(randn(SVec2)) * lj.σ / 2
+                            push!(lj, ps = [p + d, p - d], cs = [-0.3, 0.3], ms = [2, 2], bonds = [(1, 2, 10000.0, 0.05)])
+                        elseif particlemenu.selection[] == "neutral pair" && length(lj) < maxN - 1
+                            d = normalize(randn(SVec2)) * lj.σ / 2
+                            push!(lj, ps = [p + d, p - d], cs = [0, 0], ms = [2, 2], bonds = [(1, 2, 10000.0, 0.05)])
+                        end
+                    end
+                end
+                lastaction[] = time()
+            end
+            if interactions[:delete] && length(lj) > 1
+                lock(lk) do 
+                    deleteat!(lj, argmin(norm.(lj.ps .- Ref(mousepos[]))))
+                end
+                lastaction[] = time()
+            end
+        end
+
+        if !running[] || !events(fig).window_open[]
+            running[] = false
+            startbutton.label = "Start"
+            return
+        end
+    end
+    on(screen.window_open) do val
+        if !val
+            running[] = false
         end
     end
 
@@ -379,10 +383,10 @@ function main()
         startbutton.label = ifelse(running[], "Stop", "Start")
         if running[]
             Threads.@spawn runfunc()
-            schedule(Task(renderfunc))
         end
     end
 
-    display(fig)
-    fig, main_plot, node
+    display(screen, fig)
+
+    fig, main_plot, node, screen
 end

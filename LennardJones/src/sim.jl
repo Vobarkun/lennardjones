@@ -393,9 +393,11 @@ function temperature(lj::LJ)
     1/2length(lj) * sum(lj.ms .* norm.(lj.vs).^2, init = 0.0)
 end
 
-function potential(lj::LJ; cutoff = Inf)
+function potential(lj::LJ)
     (; ps, vs, ms, fs, cs, nbs, bonds, angles, σ, σs, ε, coulomb, wallr, wallk, bondk, bondl, g, E, nblist, swstrength, swangle, bonded) = lj
     
+    cutoff = getcutoff(lj) / 2
+
     E = 0.0
     for (i, j) in nbs
         if i > 0 && !bonded[i,j]
@@ -435,7 +437,7 @@ end
 function potentialPerParticle(lj::LJ)
     (; ps, vs, ms, fs, cs, nbs, bonds, angles, σ, σs, ε, coulomb, wallr, wallk, bondk, bondl, g, E, nblist, swstrength, swangle, bonded) = lj
 
-    cutoff = getcutoff(lj)
+    cutoff = getcutoff(lj) / 2
     
     Es = zeros(length(lj))
     for (i, j) in nbs

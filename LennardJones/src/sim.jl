@@ -178,7 +178,7 @@ end
 function swh(x1, y1, x2, y2, a, θ)
     r1 = sqrt(x1^2 + y1^2); r2 = sqrt(x2^2 + y2^2)
     c = (x1 * x2 + y1 * y2) / (r1 * r2)
-    20 * exp(0.5a / (r1 - a) + 0.5a / (r2 - a)) * (c - cosd(θ))^2
+    20 * exp(0.5a / (r1 - a) + 0.5a / (r2 - a)) * (c - cosd(θ))^2# * (c - cosd(2θ))^2 * (c - cosd(3θ))^2
 end
 
 function swpotential_(x1, y1, x2, y2, x3, y3, a, θ)
@@ -374,10 +374,22 @@ end
 function thermostat!(lj::LJ; dt = 1e-3)
     lj.vs .+= 1e-100 .* randn.(SVec2)
     T = temperature(lj)
-    dT = dt * lj.ts * (lj.T - T)
+    dT = dt * lj.ts * (lj.T - T) + 10dt * sqrt(T * lj.T / 2length(lj)) * sqrt(lj.ts) * randn()
     lj.vs .*= sqrt((T + dT) / T)
     T - temperature(lj)
 end
+
+# function thermostat!(lj::LJ; dt = 1e-3)
+#     lj.vs .+= 1e-100 .* randn.(SVec2)
+#     T = temperature(lj)
+#     dT = dt * lj.ts * (lj.T - T)
+#     if dT < 0
+#         lj.vs .*= sqrt((T + dT) / T)
+#     else
+#         lj.vs .+= sqrt(2dT / mean(lj.ms)) .* randn.(SVec2)
+#     end
+#     lj
+# end
 
 function minimize!(lj::LJ; nsteps = 1000, d = 1e-3)
     for i in 1:nsteps

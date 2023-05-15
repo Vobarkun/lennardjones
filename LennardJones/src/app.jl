@@ -26,6 +26,15 @@ function logrange(a, b; length)
     exp.(range(log(a), log(b), length = length))
 end
 
+function paddedextrema(X; rpad = 0.1, apad = 1e-3)
+    a = minimum(x -> ifelse(isnan(x), Inf, x), X)
+    b = maximum(x -> ifelse(isnan(x), -Inf, x), X)
+    if !isfinite(a) || !isfinite(b)
+        return (zero(a), one(b))
+    end
+    a - rpad * (b - a) - apad, b + rpad * (b - a) + apad
+end
+
 function darktheme!()
     Makie.COLOR_ACCENT[] = RGBf(((79, 122, 214) ./ 255 .* 1.5)...)
     Makie.COLOR_ACCENT_DIMMED[] = RGBf(((174, 192, 230) ./ 255 ./ 2)...);
@@ -157,17 +166,9 @@ function main()
         menugrid = rightarea[2,1] = GridLayout(tellwidth = false, halign = :left)
     
         startbutton::Button = Button(menugrid[1,1], label = "Start", width = 120, fontsize = 20)
-        on(n -> lock(() -> lj.vs .*= 0, lk), Button(menugrid[1,2], label = "Freeze", width = 80, fontsize = 20).clicks)
-        on(Button(menugrid[1,3], label = "Reset", width = 80, fontsize = 20).clicks) do _
-            lock(lk) do 
-                N = numberofatoms[]; empty!(lj)
-                pushfree!(lj, N)
-                node[] = ensureNeighbors!(deepcopy(lj))
-            end
-        end
-        
+        on(n -> lock(() -> lj.vs .*= 0, lk), Button(menugrid[1,2], label = "Freeze", width = 120, fontsize = 20).clicks)
 
-        Label(menugrid[1,4], "   Right click:", fontsize = 20, justification = :right)
+        Label(menugrid[1,4], "   place:", fontsize = 20, justification = :right)
         particlemenu::Menu = Menu(menugrid[1,5], options = ["default", "heavy", "very heavy", "positive", "negative", "polar pair", "neutral pair"], width = 120, fontsize = 20)
         colgap!(menugrid, 4, 10)
         
@@ -200,7 +201,8 @@ function main()
             )),
         ]
         Label(menugrid[1, 8], "  Presets:", fontsize = 20, justification = :right)
-        on(Menu(menugrid[1, 9], options = options, width = 120, fontsize = 20).selection) do func
+        presetmenu = Menu(menugrid[1, 9], options = options, width = 120, fontsize = 20)
+        on(presetmenu.selection) do func
             lock(lk) do 
                 N = numberofatoms[]; empty!(lj)
                 func(N)
@@ -208,6 +210,10 @@ function main()
             end
         end
         colgap!(menugrid, 8, 10)
+
+        on(Button(menugrid[1,3], label = "Reset", width = 120, fontsize = 20).clicks) do _
+            notify(presetmenu.selection)
+        end
 
         sps = Observable(0.0); fps = Observable(0); lastnsteps = Observable(0); nframes = Observable(0); lastframe = Observable(time_ns())
         Label(menugrid[1,10], halign = :right, text = lift((s, f, lj) -> "tps: $(round(Int, s))  fps: $f  N: $(length(lj))", sps, fps, node), tellwidth = false)
@@ -225,18 +231,17 @@ function main()
     begin
         plotgrid = GridLayout(rightarea[3,1], alignmode = Outside())
 
-        histsteps = 1000
+        histsteps = 2001
         Label(plotgrid[1, 1], "Temperature", rotation = pi/2, tellheight = false, fontsize = 20)
         temperatures = Observable(fill(NaN, histsteps))
         temperature_axis::Axis = Axis(plotgrid[1,2], ylabelsize = 20)
-        # hlines!(temperature_axis, [0, 0.1], color = :transparent, label = "Temperature")
+        xlims!(temperature_axis, -1.02histsteps, 0.02histsteps)
         lines!(temperature_axis, -histsteps+1:1:0, temperatures)
-        # Label(plotgrid[1, 2], "Temperature", halign = :left, valign = :top, tellwidth = false, tellheight = false, fontsize = 20)
 
         Label(plotgrid[2, 1], "Potential energy", rotation = pi/2, tellheight = false, fontsize = 20)
         potentials = Observable(fill(NaN, histsteps))
         potential_axis::Axis = Axis(plotgrid[2,2], ylabelsize = 20)
-        # hlines!(potential_axis, 0, color = :transparent)
+        xlims!(potential_axis, -1.02histsteps, 0.02histsteps)
         lines!(potential_axis, -histsteps+1:1:0, potentials)
 
         Label(plotgrid[3, 1], "Number of neighbors", rotation = pi/2, tellheight = false, fontsize = 20)
@@ -260,7 +265,9 @@ function main()
         on(node) do lj
             T = temperature(lj); T != temperatures[][end] && (temperatures[] = [temperatures[][2:end]; temperature(lj)])
             V = potential(lj); V != potentials[][end] && (potentials[] = [potentials[][2:end]; V])
-            autolimits!(temperature_axis); autolimits!(potential_axis); autolimits!(neighbor_axis); autolimits!(distance_axis)
+            ylims!(temperature_axis, paddedextrema(temperatures[], rpad = 0.12, apad = 0.0012))
+            ylims!(potential_axis, paddedextrema(potentials[], rpad = 0.12, apad = 0.0012))
+            autolimits!(neighbor_axis); autolimits!(distance_axis)
         end    
         
         remove_interactions!(temperature_axis); remove_interactions!(potential_axis); 
@@ -320,7 +327,7 @@ function main()
     # interactions
     begin
         keymap = (
-            :pullsingle => Mouse.left, :spawn => Mouse.right, :pullall => Mouse.middle, :pushall => Keyboard.c,
+            :pullsingle => Mouse.left, :spawn => Keyboard.n, :pullall => Mouse.middle, :pushall => Mouse.right,
             :delete => Keyboard.x, :cool => Keyboard.s, :coolall => Keyboard.z, :heat => Keyboard.d, :stir => Keyboard.a,
         )
         interactions = Dict(first.(keymap) .=> false)

@@ -374,10 +374,25 @@ end
 function thermostat!(lj::LJ; dt = 1e-3)
     lj.vs .+= 1e-100 .* randn.(SVec2)
     T = temperature(lj)
-    dT = dt * lj.ts * (lj.T - T) + 10dt * sqrt(T * lj.T / 2length(lj)) * sqrt(lj.ts) * randn()
+    dT = dt * lj.ts * (lj.T - T)# + 2dt * sqrt(T * lj.T / 2) * sqrt(lj.ts) * randn()
     lj.vs .*= sqrt((T + dT) / T)
-    T - temperature(lj)
 end
+
+function vrescale!(lj::LJ; dt = 1e-3)
+    lj.vs .+= 1e-100 .* randn.(SVec2)
+    T = temperature(lj)
+    R1 = randn()
+    Nf = 2length(lj)
+    expdt = exp(-dt * lj.ts)
+    TNfT = lj.T / (Nf * T)
+    α = sqrt(expdt + TNfT * (1 - expdt) * (R1^2 + rand(Chisq(Nf-1))) + 2R1 * sqrt(expdt * TNfT * (1 - expdt)))
+    lj.vs .*= α
+end
+
+# function nosehoover!(lj::LJ, p; dt = 1e-3)
+#     p[] += dt * (temperature(lj) - lj.T)
+#     lj.vs .-= (dt * p[] * lj.ts) .* lj.vs
+# end
 
 # function thermostat!(lj::LJ; dt = 1e-3)
 #     lj.vs .+= 1e-100 .* randn.(SVec2)

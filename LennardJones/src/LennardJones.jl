@@ -1,6 +1,6 @@
 module LennardJones
 
-using GLMakie, LinearAlgebra, StaticArrays, Distances, OffsetArrays, Dates, ForwardDiff, StatsBase
+using GLMakie, LinearAlgebra, StaticArrays, Distances, OffsetArrays, Dates, ForwardDiff, StatsBase, Distributions
 const SVec2 = SVector{2, Float64};
 
 include("sim.jl")

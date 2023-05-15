@@ -87,6 +87,9 @@ function lighttheme!()
     set_theme!()
 end
 
+# pentagonal crystal: lj 1.8, sw 0.7
+# nitinol: coulomb 0.4, lj 1.3, σ 0.35
+
 function main()
     lj = LJ(500)
     step!(lj, dt = 0.0)
@@ -365,7 +368,7 @@ function main()
 
                 @lock lk begin 
                     step!(lj, dt = dt[])
-                    thermostat!(lj, dt = dt[])
+                    vrescale!(lj, dt = dt[])
 
                     if interactions[:pullsingle] && interactionIndex[] <= length(lj)
                         lj.vs[interactionIndex[]] += mousestrength[] * dt[] * (mousepos[] - lj.ps[interactionIndex[]]) / lj.ms[interactionIndex[]]

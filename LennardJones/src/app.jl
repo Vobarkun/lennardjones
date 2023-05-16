@@ -128,10 +128,11 @@ function main()
             (label = "size", range = 0.01:0.001:0.5, startvalue = lj.σ) => (val -> (lj.σ = val)),
         )
         on.(last.(sliderconf), getfield.(SliderGrid(settings[2,1], first.(sliderconf)...).sliders, :value))
+        sizeslider::Slider = contents(settings[2,1])[1].sliders[2]
 
         Label(settings[3, 1], halign = :left, fontsize = 25, text = "Thermostat settings", tellwidth = false)
         sliderconf = (
-            (label = "temperature", range = 0:0.001:1, startvalue = lj.T) => val -> (lj.T = val),
+            (label = "temperature", range = (0:0.001:2).^log2(10), startvalue = lj.T) => val -> (lj.T = val),
             (label = "strength", range = (0:0.01:10).^3, startvalue = lj.ts) => (val -> (lj.ts = val)),
         )
         on.(last.(sliderconf), getfield.(SliderGrid(settings[4,1], first.(sliderconf)...).sliders, :value))
@@ -350,7 +351,8 @@ function main()
 
         scrollnode = Observable(0.0)
         on(updateevery(scrollnode, 0.05)) do val
-            set_close_to!(mousestrengthslider, round(mousestrengthslider.value[] + 10val, digits = -1))
+            # set_close_to!(mousestrengthslider, round(mousestrengthslider.value[] + 10val, digits = -1))
+            set_close_to!(sizeslider, sizeslider.value[] + 0.001val)
             scrollnode.val = 0.0
         end 
         register_interaction!(main_axis, :scroll) do event::ScrollEvent, axis

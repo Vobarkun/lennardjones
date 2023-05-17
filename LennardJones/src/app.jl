@@ -125,7 +125,7 @@ function main()
         Label(settings[1, 1], halign = :left, fontsize = 25, text = "Particle settings", tellwidth = false)
         sliderconf = (
             (label = "number", range = 1:1:1000, startvalue = length(lj)) => (val -> (numberofatoms[] = val; setnumber(val))),
-            (label = "size", range = 0.01:0.001:0.5, startvalue = lj.σ) => (val -> (lj.σ = val)),
+            (label = "size", range = 0.01:0.0001:0.5, startvalue = lj.σ) => (val -> (lj.σ = val)),
         )
         on.(last.(sliderconf), getfield.(SliderGrid(settings[2,1], first.(sliderconf)...).sliders, :value))
         sizeslider::Slider = contents(settings[2,1])[1].sliders[2]
@@ -331,12 +331,52 @@ function main()
     # interactions
     begin
         keymap = (
-            :pullsingle => Mouse.left, :spawn => Keyboard.n, :pullall => Mouse.middle, :pushall => Mouse.right,
-            :delete => Keyboard.x, :cool => Keyboard.s, :coolall => Keyboard.z, :heat => Keyboard.d, :stir => Keyboard.a,
+            :pullsingle => Mouse.left, :pullall => Mouse.middle, :pushall => Keyboard.c,
+            :spawn => Mouse.right, :delete => Keyboard.x, 
+            :stirleft => Keyboard.q, :stirright => Keyboard.e,
+            :pushleft => Keyboard.a, :pushright => Keyboard.d,
+            :pushup => Keyboard.w, :pushdown => Keyboard.s,
+            :cool => Keyboard.g, :coolall => Keyboard.f, 
+            :heat => Keyboard.t,  :heatall => Keyboard.r, 
         )
         interactions = Dict(first.(keymap) .=> false)
+        function handleinteractions!(lj, interactions, index, mousepos, strength, dt)
+            if interactions[:pullsingle] && index <= length(lj)
+                lj.vs[index] += index * dt * (mousepos - lj.ps[index]) / lj.ms[index]
+            end
+            if interactions[:pullall]
+                lj.vs .+= 0.1strength * dt .* (Ref(mousepos) .- lj.ps) ./ (0.05 .+ norm.(Ref(mousepos) .- lj.ps)).^2 ./ lj.ms
+                lj.vs .*= 1 .- (0.1strength * dt) .* exp.(-10 .* norm.(lj.ps .- Ref(mousepos)).^2)
+            end
+            if interactions[:pushall]
+                lj.vs .+= strength * dt .* exp.(-20 .* norm.(lj.ps .- Ref(mousepos)).^2) .* (lj.ps .- Ref(mousepos)) ./ lj.ms
+            end
+            if interactions[:cool]
+                lj.vs .*= max.(0, 1 .- (0.2strength * dt) .* exp.(-100 .* norm.(lj.ps .- Ref(mousepos)).^2))
+            end
+            if interactions[:coolall]
+                lj.vs .*= max.(0, 1 .- (0.05strength * dt))
+            end
+            if interactions[:heat]
+                lj.vs .+= 2strength * dt .* exp.(-100 .* norm.(lj.ps .- Ref(mousepos)).^2) .* randn.(SVec2) ./ lj.ms
+            end
+            if interactions[:heatall]
+                lj.vs .+= 1strength * dt .* randn.(SVec2) ./ lj.ms
+            end
+            if interactions[:stirleft]
+                lj.vs .+= strength / 5 * dt .* exp.(-20 .* norm.(lj.ps .- Ref(mousepos)).^2) .* Ref(SA[0.7 1; -1 0.7]) .* (Ref(mousepos) .- lj.ps) ./ lj.ms
+            end
+            if interactions[:stirright]
+                lj.vs .+= strength / 5 * dt .* exp.(-20 .* norm.(lj.ps .- Ref(mousepos)).^2) .* Ref(SA[0.7 -1; 1 0.7]) .* (Ref(mousepos) .- lj.ps) ./ lj.ms
+            end
+            for (i, dir) in zip((:pushleft, :pushright, :pushup, :pushdown), (SA[-1, 0], SA[1, 0], SA[0, 1], SA[0, -1]))
+                if interactions[i]
+                    lj.vs .+= 0.05strength .* dt .* Ref(dir) ./ lj.ms
+                end
+            end
+        end
+        
         mousepos = Observable(SA[0.0,0.0])
-
         interactionIndex = Observable(1)
         on(events(main_axis).mousebutton) do event
             if event.button == Mouse.left && event.action == Mouse.press
@@ -351,12 +391,12 @@ function main()
 
         scrollnode = Observable(0.0)
         on(updateevery(scrollnode, 0.05)) do val
-            # set_close_to!(mousestrengthslider, round(mousestrengthslider.value[] + 10val, digits = -1))
-            set_close_to!(sizeslider, sizeslider.value[] + 0.001val)
+            set_close_to!(sizeslider, sizeslider.value[] + val)
             scrollnode.val = 0.0
         end 
         register_interaction!(main_axis, :scroll) do event::ScrollEvent, axis
-            scrollnode[] += event.y
+            lj.σ += 0.0001event.y
+            scrollnode[] += 0.0001event.y
         end
     end
 
@@ -371,29 +411,7 @@ function main()
                 @lock lk begin 
                     step!(lj, dt = dt[])
                     vrescale!(lj, dt = dt[])
-
-                    if interactions[:pullsingle] && interactionIndex[] <= length(lj)
-                        lj.vs[interactionIndex[]] += mousestrength[] * dt[] * (mousepos[] - lj.ps[interactionIndex[]]) / lj.ms[interactionIndex[]]
-                    end
-                    if interactions[:pullall]
-                        lj.vs .+= mousestrength[] / 10 * dt[] .* (Ref(mousepos[]) .- lj.ps) ./ (0.05 .+ norm.(Ref(mousepos[]) .- lj.ps)).^2 ./ lj.ms
-                        lj.vs .*= 1 .- (0.1mousestrength[] * dt[]) .* exp.(-10 .* norm.(lj.ps .- Ref(mousepos[])).^2)
-                    end
-                    if interactions[:pushall]
-                        lj.vs .+= mousestrength[] * dt[] .* exp.(-20 .* norm.(lj.ps .- Ref(mousepos[])).^2) .* (lj.ps .- Ref(mousepos[]))
-                    end
-                    if interactions[:cool]
-                        lj.vs .*= 1 .- (0.2mousestrength[] * dt[]) .* exp.(-10 .* norm.(lj.ps .- Ref(mousepos[])).^2)
-                    end
-                    if interactions[:coolall]
-                        lj.vs .*= 1 .- (0.1mousestrength[] * dt[])
-                    end
-                    if interactions[:heat]
-                        lj.vs .+= 2mousestrength[] * dt[] .* exp.(-100 .* norm.(lj.ps .- Ref(mousepos[])).^2) .* randn.(SVec2)
-                    end
-                    if interactions[:stir]
-                        lj.vs .+= mousestrength[] / 5 * dt[] .* exp.(-20 .* norm.(lj.ps .- Ref(mousepos[])).^2) .* Ref(SA[0.7 1; -1 0.7]) .* (Ref(mousepos[]) .- lj.ps)
-                    end
+                    handleinteractions!(lj, interactions, interactionIndex[], mousepos[], mousestrength[], dt[])
                 end
                 
                 u = time_ns()
@@ -417,7 +435,7 @@ function main()
         node[] = ensureNeighbors!(deepcopy(lj), forced = true)
 
         for (name, key) in keymap
-            if is_mouseinside(main_axis) || interactions[name]
+            if key isa Keyboard.Button || is_mouseinside(main_axis) || interactions[name]
                 interactions[name] = ispressed(main_axis, key)
             end
         end

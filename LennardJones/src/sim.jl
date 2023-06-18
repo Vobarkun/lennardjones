@@ -178,11 +178,11 @@ end
 function swh(x1, y1, x2, y2, a, θ)
     r1 = sqrt(x1^2 + y1^2); r2 = sqrt(x2^2 + y2^2)
     c = (x1 * x2 + y1 * y2) / (r1 * r2)
-    20 * exp(0.5a / (r1 - a) + 0.5a / (r2 - a)) * (c - cosd(θ))^2# * (c - cosd(2θ))^2 * (c - cosd(3θ))^2
+    20 * exp(0.5a / (r1 - a) + 0.5a / (r2 - a)) * (c - cosd(θ))^2
 end
 
 function swpotential_(x1, y1, x2, y2, x3, y3, a, θ)
-    swh(x2 - x1, y2 - y1, x3 - x1, y3 - y1, a, θ)# + swh(x1 - x2, y1 - y2, x3 - x2, y3 - y2, a) + swh(x2 - x3, y2 - y3, x1 - x3, y1 - y3, a)
+    swh(x2 - x1, y2 - y1, x3 - x1, y3 - y1, a, θ)
 end
 
 function swgrad(r1, r2, r3, a, θ)
@@ -195,9 +195,6 @@ end
 
 function swforce(r1, r2, r3, a, θ)
     f1 = swgrad(r1, r2, r3, a, θ)
-    # f2 = swgrad(r2, r3, r1, a)
-    # f3 = swgrad(r3, r1, r2, a)
-    # f1[1] + f2[3] + f3[2], f1[2] + f2[1] + f3[3], f1[3] + f2[2] + f3[1]
 end
 
 function swpotential(r1, r2, r3, a, θ)
@@ -352,7 +349,7 @@ function ensureNeighbors!(lj::LJ; forced = false)
     if length(lj.lastnbps) != length(lj.ps)
         lj.lastnbps = zero(lj.ps)
     end
-    if forced || maximum(norm.(lj.lastnbps .- lj.ps), init = 0.0) > cutoff / 4
+    if forced || maximum(norm.(lj.lastnbps .- lj.ps), init = 0.0) > cutoff / 4 || lj.nbs[1] == (0,0)
         neighbors!(lj, cutoff = cutoff)
         lj.lastnbps .= lj.ps
     end
@@ -374,7 +371,7 @@ end
 function thermostat!(lj::LJ; dt = 1e-3)
     lj.vs .+= 1e-100 .* randn.(SVec2)
     T = temperature(lj)
-    dT = dt * lj.ts * (lj.T - T)# + 2dt * sqrt(T * lj.T / 2) * sqrt(lj.ts) * randn()
+    dT = dt * lj.ts * (lj.T - T)
     lj.vs .*= sqrt((T + dT) / T)
 end
 
@@ -388,23 +385,6 @@ function vrescale!(lj::LJ; dt = 1e-3)
     α = sqrt(expdt + TNfT * (1 - expdt) * (R1^2 + rand(Chisq(Nf-1))) + 2R1 * sqrt(expdt * TNfT * (1 - expdt)))
     lj.vs .*= α
 end
-
-# function nosehoover!(lj::LJ, p; dt = 1e-3)
-#     p[] += dt * (temperature(lj) - lj.T)
-#     lj.vs .-= (dt * p[] * lj.ts) .* lj.vs
-# end
-
-# function thermostat!(lj::LJ; dt = 1e-3)
-#     lj.vs .+= 1e-100 .* randn.(SVec2)
-#     T = temperature(lj)
-#     dT = dt * lj.ts * (lj.T - T)
-#     if dT < 0
-#         lj.vs .*= sqrt((T + dT) / T)
-#     else
-#         lj.vs .+= sqrt(2dT / mean(lj.ms)) .* randn.(SVec2)
-#     end
-#     lj
-# end
 
 function minimize!(lj::LJ; nsteps = 1000, d = 1e-3)
     for i in 1:nsteps
@@ -421,44 +401,7 @@ function temperature(lj::LJ)
 end
 
 function potential(lj::LJ)
-    (; ps, vs, ms, fs, cs, nbs, bonds, angles, σ, σs, ε, coulomb, wallr, wallk, bondk, bondl, g, E, nblist, swstrength, swangle, bonded) = lj
-    
-    cutoff = getcutoff(lj) / 2
-
-    E = 0.0
-    for (i, j) in nbs
-        if i > 0 && j > 0 && !bonded[i,j]
-            v = ps[j] - ps[i]
-            nv = norm(v)
-            if nv < cutoff
-                E += ljp(σ * (σs[i] + σs[j]) / 2, ε, v) - ljp(σ * (σs[i] + σs[j]) / 2, ε, cutoff)
-                
-                E += coulomb * cs[i] * cs[j] * (1 / norm(v) - 1 / cutoff - 0.5norm(v)^2)
-            end
-        end
-    end
-    if swstrength != 0
-        for i in 1:length(lj)
-            for j in nblist[i]
-                j == 0 && break
-                if norm(ps[i] - ps[j]) < 1.7σ
-                    for k in nblist[i]
-                        k == 0 && break
-                        if j < k
-                            E += swstrength * swpotential(ps[i], ps[j], ps[k], 1.7σ, swangle)
-                        end
-                    end
-                end
-            end
-        end
-    end
-    for (i, j, k, l) in bonds
-        if i <= length(ps) && j <= length(ps)
-            v = ps[j] - ps[i]
-            E += 0.5bondk * k * (norm(v) - l * bondl)^2
-        end
-    end
-    E / length(lj)
+    mean(potentialPerParticle(lj))
 end
 
 function potentialPerParticle(lj::LJ)
@@ -474,7 +417,7 @@ function potentialPerParticle(lj::LJ)
             if nv < cutoff
                 E = ljp(σ * (σs[i] + σs[j]) / 2, ε, v) - ljp(σ * (σs[i] + σs[j]) / 2, ε, cutoff)
                 E += coulomb * cs[i] * cs[j] * (1 / norm(v) - 1 / cutoff - 0.5nv^2)
-                Es[i] += E; Es[j] += E
+                Es[i] += E / 2; Es[j] += E / 2
             end
         end
     end
@@ -487,7 +430,7 @@ function potentialPerParticle(lj::LJ)
                         k == 0 && break
                         if j < k
                             E = swstrength * swpotential(ps[i], ps[j], ps[k], 1.7σ, swangle)
-                            Es[i] += E; Es[j] += E; Es[k] += E
+                            Es[i] += E / 3; Es[j] += E / 3; Es[k] += E / 3
                         end
                     end
                 end
@@ -498,10 +441,40 @@ function potentialPerParticle(lj::LJ)
         if i <= length(ps) && j <= length(ps)
             v = ps[j] - ps[i]
             E = 0.5bondk * k * (norm(v) - l * bondl)^2
-            Es[i] += E; Es[j] += E
+            Es[i] += E / 2; Es[j] += E / 2
         end
     end
     Es
+end
+
+function virial(lj::LJ)
+    (; ps, vs, ms, fs, cs, nbs, bonds, angles, σ, σs, ε, coulomb, wallr, wallk, bondk, bondl, g, E, nblist, swstrength, swangle, bonded) = lj
+
+    Ξ = 0.0
+
+    cutoff = getcutoff(lj) / 2
+
+    for (i, j) in nbs
+        if i > 0 && j > 0 && !bonded[i,j]
+            v = ps[j] - ps[i]
+            nv = norm(v)
+            if nv < cutoff
+                f = ljf(σ * (σs[i] + σs[j]) / 2, ε, v)
+                Ξ += f ⋅ v
+                f = 1.0 * coulomb * cs[i] * cs[j] * (1 / nv^3 - 1 / cutoff^3) * v
+                Ξ += f ⋅ v
+            end
+        end
+    end
+
+    for (i, j, k, l) in bonds
+        if i <= length(ps) && j <= length(ps)
+            v = ps[j] - ps[i]
+            f = -bondk * k * normalize(v) * (norm(v) - l * bondl)
+            Ξ += f ⋅ v
+        end
+    end
+    Ξ
 end
 
 # bij = zeros(length(lj))

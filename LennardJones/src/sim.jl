@@ -25,6 +25,7 @@ Base.@kwdef mutable struct LJ
     wallk::Float64 = 1e6
     g::Float64 = 0.0
     E::Float64 = 0.0
+    B::Float64 = 0.0
     
     T::Float64 = 0.0
     ts::Float64 = 1.0
@@ -205,7 +206,7 @@ function swpotential(r1, r2, r3, a, θ)
 end
 
 function forces!(lj::LJ; cutoff = Inf)
-    (; ps, vs, ms, fs, cs, nbs, bonds, angles, σ, σs, ε, coulomb, wallr, wallk, bondk, bondl, g, E, nblist, swstrength, swangle, bonded) = lj
+    (; ps, vs, ms, fs, cs, nbs, bonds, angles, σ, σs, ε, coulomb, wallr, wallk, bondk, bondl, g, E, B, nblist, swstrength, swangle, bonded) = lj
 
     fill!(fs, zero(eltype(fs)))
 
@@ -268,6 +269,7 @@ function forces!(lj::LJ; cutoff = Inf)
     end
     fs .+= ms .* Ref(SA[0, g])
     fs .+= coulomb .* cs .* Ref(SA[0, E])
+    fs .+= coulomb .* cs .* B .* (Ref(SA[0 1; -1 0]) .* lj.vs)
     
     fs
 end
@@ -447,10 +449,10 @@ function potentialPerParticle(lj::LJ)
     Es
 end
 
-function virial(lj::LJ)
+function virialPerParticle(lj::LJ)
     (; ps, vs, ms, fs, cs, nbs, bonds, angles, σ, σs, ε, coulomb, wallr, wallk, bondk, bondl, g, E, nblist, swstrength, swangle, bonded) = lj
 
-    Ξ = 0.0
+    Ξs = zeros(length(lj))
 
     cutoff = getcutoff(lj) / 2
 
@@ -460,9 +462,9 @@ function virial(lj::LJ)
             nv = norm(v)
             if nv < cutoff
                 f = ljf(σ * (σs[i] + σs[j]) / 2, ε, v)
-                Ξ += f ⋅ v
+                Ξs[i] += f ⋅ v / 2; Ξs[j] += f ⋅ v / 2 
                 f = 1.0 * coulomb * cs[i] * cs[j] * (1 / nv^3 - 1 / cutoff^3) * v
-                Ξ += f ⋅ v
+                Ξs[i] += f ⋅ v / 2; Ξs[j] += f ⋅ v / 2 
             end
         end
     end
@@ -471,10 +473,30 @@ function virial(lj::LJ)
         if i <= length(ps) && j <= length(ps)
             v = ps[j] - ps[i]
             f = -bondk * k * normalize(v) * (norm(v) - l * bondl)
-            Ξ += f ⋅ v
+            Ξs[i] += f ⋅ v / 2; Ξs[j] += f ⋅ v / 2 
         end
     end
-    Ξ
+
+    Ξs
+end
+
+function virial(lj::LJ)
+    sum(virialPerParticle(lj))
+end
+
+function neighborsPerParticle(lj::LJ, r = Inf)
+    ns = zeros(Int, length(lj))
+    cutoff = min(r, getcutoff(lj) / 2)
+
+    for (i, j) in lj.nbs
+        if i > 0 && j > 0 && !lj.bonded[i,j]
+            if norm(lj.ps[j] - lj.ps[i]) < cutoff
+                ns[i] += 1
+                ns[j] += 1
+            end
+        end
+    end
+    ns
 end
 
 # bij = zeros(length(lj))

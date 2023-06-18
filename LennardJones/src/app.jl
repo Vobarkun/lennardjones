@@ -90,7 +90,7 @@ end
 # pentagonal crystal: lj 1.8, sw 0.7
 # nitinol: coulomb 0.4, lj 1.3, σ 0.35
 
-function main()
+function main(; decorated = true)
     lj = LJ(500)
     step!(lj, dt = 0.0)
     node = Observable(lj)
@@ -152,6 +152,7 @@ function main()
         sliderconf4 = (
             (label = "gravity", range = 0:-0.01:-10, startvalue = lj.g) => (val -> (lj.g = val)),
             (label = "voltage", range = (0:0.1:100).^3, startvalue = lj.g) => (val -> (lj.E = val)),
+            (label = "magnetic", range = (0:0.1:100), startvalue = lj.g) => (val -> (lj.B = val)),
             (label = "interactive", range = 1:1:1000, startvalue = 500) => (val -> (mousestrength[] = val)),
         )
         on.(last.(sliderconf4), getfield.(SliderGrid(settings[8,1], first.(sliderconf4)...).sliders, :value))
@@ -176,7 +177,7 @@ function main()
         colgap!(menugrid, 4, 10)
         
         Label(menugrid[1,6], " Color:", fontsize = 20, justification = :right)
-        colormenu::Menu = Menu(menugrid[1,7], options = ["potential", "velocity", "charge", "nothing"], width = 120, fontsize = 20)
+        colormenu::Menu = Menu(menugrid[1,7], options = ["potential", "velocity", "virial", "charge", "nothing"], width = 120, fontsize = 20)
         colgap!(menugrid, 6, 10)
 
         options = [
@@ -343,11 +344,13 @@ function main()
             elseif colormenu.selection[] == "potential"
                 cs = potentialPerParticle(lj) ./ lj.σs
                 color[][1:N] .= sqrt.(cs .- minimum(cs))
+            elseif colormenu.selection[] == "virial"
+                color[][1:N] .= virialPerParticle(lj)# ./ max.(1, neighborsPerParticle(lj, 1.2lj.σ))
             elseif colormenu.selection[] == "nothing"
                 color[][1:N] .= 0
             end
             color[] = color[]
-            colorrange[] = (0.9colorrange[][1] + 0.1minimum(color[]), 0.9colorrange[][2] + 0.1maximum(color[]))
+            colorrange[] = (0.8colorrange[][1] + 0.2minimum(color[][1:N]), 0.8colorrange[][2] + 0.2maximum(color[][1:N]))
 
             if any(markersize[][i] != lj.σ * lj.σs[i] for i in 1:N)
                 markersize[][1:N] .= lj.σ .* lj.σs
@@ -384,7 +387,7 @@ function main()
                 lj.vs .*= 1 .- (0.1strength * dt) .* exp.(-10 .* norm.(lj.ps .- Ref(mousepos)).^2)
             end
             if interactions[:pushall]
-                lj.vs .+= strength * dt .* exp.(-20 .* norm.(lj.ps .- Ref(mousepos)).^2) .* (lj.ps .- Ref(mousepos)) ./ lj.ms
+                lj.vs .+= 30strength * dt .* exp.(-200 .* norm.(lj.ps .- Ref(mousepos)).^2) .* (lj.ps .- Ref(mousepos)) ./ lj.ms
             end
             if interactions[:cool]
                 lj.vs .*= max.(0, 1 .- (0.2strength * dt) .* exp.(-100 .* norm.(lj.ps .- Ref(mousepos)).^2))
@@ -520,7 +523,7 @@ function main()
         end
     end
     
-    screen::GLMakie.Screen{GLMakie.GLFW.Window} = GLMakie.Screen(renderloop = GLMakie.renderloop, framerate = 120)
+    screen::GLMakie.Screen{GLMakie.GLFW.Window} = GLMakie.Screen(renderloop = GLMakie.renderloop, framerate = 120, decorated = decorated)
     on(renderfunc, screen.render_tick)
 
     on(screen.window_open) do val

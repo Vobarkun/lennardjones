@@ -14,7 +14,7 @@ Base.@kwdef mutable struct LJ
     nblist::Vector{Vector{Int64}} = []
     lastnbps::Vector{SVector{2, Float64}} = []
     
-    σ::Float64 = 0.05
+    σ::Float64 = 0.03
     ε::Float64 = 1.0
     swstrength::Float64 = 0.0
     swangle::Float64 = 120.0
@@ -122,7 +122,7 @@ end
 function placefree(lj::LJ, ps; r = NaN, ntries = 100)
     r = ifelse(isnan(r), lj.σ, r)
     for i in 1:ntries
-        p = randfree(lj, r = r)
+        p = randfree(lj, r = r, ntries = 100)
         ϕ = 2pi * rand()
         qs = Ref(SA[cos(ϕ) sin(ϕ); -sin(ϕ) cos(ϕ)]) .* ps .+ Ref(p)
         if all(all(abs.(q) .< lj.wallr) for q in qs) && all(norm(p - q) > r for p in lj.ps for q in qs)
@@ -132,7 +132,7 @@ function placefree(lj::LJ, ps; r = NaN, ntries = 100)
     return nothing
 end
 
-function randfree(lj::LJ; r = NaN, ntries = 10000)
+function randfree(lj::LJ; r = NaN, ntries = 100)
     length(lj) == 0 && return randb(lj)
     r = ifelse(isnan(r), lj.σ, r)
     dmin = Inf
@@ -351,7 +351,7 @@ function ensureNeighbors!(lj::LJ; forced = false)
     if length(lj.lastnbps) != length(lj.ps)
         lj.lastnbps = zero(lj.ps)
     end
-    if forced || maximum(norm.(lj.lastnbps .- lj.ps), init = 0.0) > cutoff / 4 || lj.nbs[1] == (0,0)
+    if forced || maximum(norm.(lj.lastnbps .- lj.ps), init = 0.0) > cutoff / 4 || get(lj.nbs, 1, (1,1)) == (0,0)
         neighbors!(lj, cutoff = cutoff)
         lj.lastnbps .= lj.ps
     end

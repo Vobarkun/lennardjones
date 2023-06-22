@@ -35,6 +35,10 @@ function paddedextrema(X; rpad = 0.1, apad = 1e-3)
     a - rpad * (b - a) - apad, b + rpad * (b - a) + apad
 end
 
+function ssqrt(x)
+    sign(x) * sqrt(abs(x))
+end
+
 function darktheme!()
     Makie.COLOR_ACCENT[] = RGBf(((79, 122, 214) ./ 255 .* 1.5)...)
     Makie.COLOR_ACCENT_DIMMED[] = RGBf(((174, 192, 230) ./ 255 ./ 2)...);
@@ -110,9 +114,7 @@ function main(; decorated = true)
                 while length(lj) > val
                     deleteat!(lj, length(lj))
                 end
-                while length(lj) < val
-                    push!(lj, randfree(lj))
-                end
+                pushfree!(lj, val - length(lj))
                 node[] = ensureNeighbors!(deepcopy(lj))
             end
         end
@@ -125,7 +127,7 @@ function main(; decorated = true)
         Label(settings[1, 1], halign = :left, fontsize = 25, text = "Particle settings", tellwidth = false)
         sliderconf1 = (
             (label = "number", range = 1:1:1000, startvalue = length(lj)) => (val -> (numberofatoms[] = val; setnumber(val))),
-            (label = "size", range = 0.01:0.0001:0.5, startvalue = lj.σ) => (val -> (lj.σ = val)),
+            (label = "size", range = 0.01:0.0001:0.2, startvalue = lj.σ) => (val -> (lj.σ = val)),
         )
         on.(last.(sliderconf1), getfield.(SliderGrid(settings[2,1], first.(sliderconf1)...).sliders, :value))
         sizeslider::Slider = contents(settings[2,1])[1].sliders[2]
@@ -153,13 +155,13 @@ function main(; decorated = true)
             (label = "gravity", range = 0:-0.01:-10, startvalue = lj.g) => (val -> (lj.g = val)),
             (label = "voltage", range = (0:0.1:100).^3, startvalue = lj.g) => (val -> (lj.E = val)),
             (label = "magnetic", range = (0:0.1:100), startvalue = lj.g) => (val -> (lj.B = val)),
-            (label = "interactive", range = 1:1:1000, startvalue = 500) => (val -> (mousestrength[] = val)),
+            (label = "interactive", range = 1:1:1000, startvalue = mousestrength[]) => (val -> (mousestrength[] = val)),
         )
         on.(last.(sliderconf4), getfield.(SliderGrid(settings[8,1], first.(sliderconf4)...).sliders, :value))
 
         Label(settings[9, 1], halign = :left, fontsize = 25, text = "Simulation Controls", tellwidth = false)
         sliderconf5 = (
-            (label = "time step", range = logrange(1e-6, 1e-3, length = 1000), startvalue = 1e-4) => (val -> (dt[] = val)),
+            (label = "time step", range = logrange(1e-7, 1e-3, length = 1000), startvalue = 1e-4) => (val -> (dt[] = val)),
         )
         on.(last.(sliderconf5), getfield.(SliderGrid(settings[10,1], first.(sliderconf5)...).sliders, :value))
     end
@@ -219,8 +221,9 @@ function main(; decorated = true)
             notify(presetmenu.selection)
         end
 
+
         sps = Observable(0.0); fps = Observable(0); lastnsteps = Observable(0); nframes = Observable(0); lastframe = Observable(time_ns())
-        Label(menugrid[1,10], halign = :right, text = lift((s, f, lj) -> "tps: $(round(Int, s))  fps: $f  N: $(length(lj))", sps, fps, node), tellwidth = false)
+        Label(menugrid[2,10], halign = :right, text = lift((s, f, lj) -> "tps: $(round(Int, s))  fps: $f  N: $(length(lj))", sps, fps, node), tellwidth = false, justification = :right, color = :grey60)
         on(node) do lj
             nframes[] += 1
             if time_ns() - lastframe[] > 1e9
@@ -228,6 +231,10 @@ function main(; decorated = true)
                 lastnsteps[] = lj.nsteps; fps[] = nframes[]; nframes[] = 0; lastframe[] = time_ns()
             end
         end
+
+        controlstext = "Left: pull, Middle: attract all, Right: add new,    W: move up, A: move left, S: move down, D: move right, Q: rotate left, E: rotate right, R: heat all, F: cool all, R: heat local, G: cool local, X: delete, C: repel"
+        Label(menugrid[2,1:9], controlstext, justification = :right, halign = :left, color = :grey60, padding = (0,0,0,0))
+        rowgap!(menugrid, 1, 15)
     end
 
 
@@ -345,12 +352,16 @@ function main(; decorated = true)
                 cs = potentialPerParticle(lj) ./ lj.σs
                 color[][1:N] .= sqrt.(cs .- minimum(cs))
             elseif colormenu.selection[] == "virial"
-                color[][1:N] .= virialPerParticle(lj)# ./ max.(1, neighborsPerParticle(lj, 1.2lj.σ))
+                color[][1:N] .= ssqrt.(virialPerParticle(lj))
             elseif colormenu.selection[] == "nothing"
                 color[][1:N] .= 0
             end
-            color[] = color[]
+            # if colormenu.selection[] == "virial"
+            #     colorrange[] = (0.8colorrange[][1] - 0.2maximum(abs, color[][1:N]), 0.8colorrange[][2] + 0.2maximum(abs, color[][1:N]))
+            # else
             colorrange[] = (0.8colorrange[][1] + 0.2minimum(color[][1:N]), 0.8colorrange[][2] + 0.2maximum(color[][1:N]))
+            # end
+            notify(color)
 
             if any(markersize[][i] != lj.σ * lj.σs[i] for i in 1:N)
                 markersize[][1:N] .= lj.σ .* lj.σs
@@ -380,10 +391,10 @@ function main(; decorated = true)
         interactions = Dict(first.(keymap) .=> false)
         function handleInteractions!(lj, interactions, index, mousepos, strength, dt)
             if interactions[:pullsingle] && index <= length(lj)
-                lj.vs[index] += index * dt * (mousepos - lj.ps[index]) / lj.ms[index]
+                lj.vs[index] += 200 * dt * (mousepos - lj.ps[index]) / lj.ms[index]
             end
             if interactions[:pullall]
-                lj.vs .+= 0.1strength * dt .* (Ref(mousepos) .- lj.ps) ./ (0.05 .+ norm.(Ref(mousepos) .- lj.ps)).^2 ./ lj.ms
+                lj.vs .+= 0.04strength * dt .* (Ref(mousepos) .- lj.ps) ./ (0.05 .+ norm.(Ref(mousepos) .- lj.ps)).^2 ./ lj.ms
                 lj.vs .*= 1 .- (0.1strength * dt) .* exp.(-10 .* norm.(lj.ps .- Ref(mousepos)).^2)
             end
             if interactions[:pushall]
@@ -476,6 +487,8 @@ function main(; decorated = true)
     lastaction = Observable(time())
 
     function renderfunc(x)
+        # length(lj) == 0 && return
+
         node[] = ensureNeighbors!(lock(() -> deepcopy(lj), lk), forced = false)
 
         updateInteractions!(interactions, keymap, main_axis)
@@ -519,7 +532,6 @@ function main(; decorated = true)
         if !running[] || !events(fig).window_open[]
             running[] = false
             startbutton.label = "Start"
-            return
         end
     end
     

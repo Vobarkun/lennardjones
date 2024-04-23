@@ -68,6 +68,7 @@ function darktheme!()
         Slider = (
             color_inactive = :grey20,
             text_color = :grey80,
+            font_size = 10
         ),
         Button = (
             buttoncolor = :grey20,
@@ -101,7 +102,7 @@ function main(; decorated = true)
 
     lk = ReentrantLock()
 
-    fig = Figure(resolution = (3200,1800), figure_padding = 20)
+    fig = Figure(size = (1600,900), figure_padding = 20)
 
     rightarea = fig[1,2] = GridLayout()
     colsize!(fig.layout, 1, Aspect(1, 1.0))
@@ -124,7 +125,8 @@ function main(; decorated = true)
         numberofatoms = Observable(length(lj))
 
         settings = GridLayout(rightarea[1,1])
-        Label(settings[1, 1], halign = :left, fontsize = 25, text = "Particle settings", tellwidth = false)
+        # rowsize!(rightarea, 1, Relative(0.5))
+        Label(settings[1, 1], halign = :left, fontsize = 20, text = "Particle settings", tellwidth = false)
         sliderconf1 = (
             (label = "number", range = 1:1:1000, startvalue = length(lj)) => (val -> (numberofatoms[] = val; setnumber(val))),
             (label = "size", range = 0.01:0.0001:0.2, startvalue = lj.σ) => (val -> (lj.σ = val)),
@@ -132,14 +134,14 @@ function main(; decorated = true)
         on.(last.(sliderconf1), getfield.(SliderGrid(settings[2,1], first.(sliderconf1)...).sliders, :value))
         sizeslider::Slider = contents(settings[2,1])[1].sliders[2]
 
-        Label(settings[3, 1], halign = :left, fontsize = 25, text = "Thermostat settings", tellwidth = false)
+        Label(settings[3, 1], halign = :left, fontsize = 20, text = "Thermostat settings", tellwidth = false)
         sliderconf2 = (
             (label = "temperature", range = (0:0.001:2).^log2(10), startvalue = lj.T) => val -> (lj.T = val),
             (label = "strength", range = (0:0.01:10).^3, startvalue = lj.ts) => (val -> (lj.ts = val)),
         )
         on.(last.(sliderconf2), getfield.(SliderGrid(settings[4,1], first.(sliderconf2)...).sliders, :value))
 
-        Label(settings[5, 1], halign = :left, fontsize = 25, text = "Internal forces", tellwidth = false)
+        Label(settings[5, 1], halign = :left, fontsize = 20, text = "Internal forces", tellwidth = false)
         sliderconf3 = (
             (label = "Coulomb", range = (0:0.001:10).^2, startvalue = lj.coulomb) => (val -> (lj.coulomb = val)),
             (label = "Lennard-Jones", range = 0:0.01:10, startvalue = lj.ε) => (val -> (lj.ε = val)),
@@ -150,7 +152,7 @@ function main(; decorated = true)
         )
         on.(last.(sliderconf3), getfield.(SliderGrid(settings[6,1], first.(sliderconf3)...).sliders, :value))
 
-        Label(settings[7, 1], halign = :left, fontsize = 25, text = "External forces", tellwidth = false)
+        Label(settings[7, 1], halign = :left, fontsize = 20, text = "External forces", tellwidth = false)
         sliderconf4 = (
             (label = "gravity", range = 0:-0.01:-10, startvalue = lj.g) => (val -> (lj.g = val)),
             (label = "voltage", range = (0:0.1:100).^3, startvalue = lj.g) => (val -> (lj.E = val)),
@@ -159,7 +161,7 @@ function main(; decorated = true)
         )
         on.(last.(sliderconf4), getfield.(SliderGrid(settings[8,1], first.(sliderconf4)...).sliders, :value))
 
-        Label(settings[9, 1], halign = :left, fontsize = 25, text = "Simulation Controls", tellwidth = false)
+        Label(settings[9, 1], halign = :left, fontsize = 20, text = "Simulation Controls", tellwidth = false)
         sliderconf5 = (
             (label = "time step", range = logrange(1e-7, 1e-3, length = 1000), startvalue = 1e-4) => (val -> (dt[] = val)),
         )
@@ -183,8 +185,16 @@ function main(; decorated = true)
         colgap!(menugrid, 6, 10)
 
         options = [
-            ("Default", N -> pushfree!(lj, N)),
-            ("Ions", N -> for i in 1:N pushfree!(lj, cs = [-sign(sum(lj.cs) - 1e-10)]) end),
+            ("default", N -> pushfree!(lj, N)),
+            ("random neutral", N -> for i in 1:N 
+                m = (rand() + 1) / 2
+                pushfree!(lj, 1, ms = [m], σs = [sqrt(m)])
+            end),
+            ("random charge", N -> for i in 1:N 
+                m = (rand() + 1) / 2
+                pushfree!(lj, 1, ms = [m], σs = [sqrt(m)], cs = [2rand()-1])
+            end),
+            ("ions", N -> for i in 1:N pushfree!(lj, cs = [-sign(sum(lj.cs) - 1e-10)]) end),
             ("diatomic", N -> pushfree!(lj, N ÷ 2, 
                 ps = [SA[lj.bondl * 0.05, 0.0], SA[0.0, 0.0]], 
                 bonds = [(1, 2, 10000.0, 0.05)]
@@ -192,6 +202,12 @@ function main(; decorated = true)
             ("polar", N -> pushfree!(lj, N ÷ 2, 
                 ps = [SA[lj.bondl * 0.05, 0.0], SA[0.0, 0.0]], 
                 cs = [1.0, -1.0], bonds = [(1, 2, 10000.0, 0.05)]
+            )),
+            ("water", N -> pushfree!(lj, N ÷ 2, 
+                σs = [1, 0.35, 0.35], ms = [16, 1, 1], cs = [1.0, -0.5, -0.5], 
+                ps = [SA[0.0, 0.0], lj.bondl * 0.05 * SA[1.0, 0.0], lj.bondl * 0.05 * SA[cosd(120), sind(120)]], 
+                bonds = [(1, 2, 10000.0, 0.05), (1, 3, 10000.0, 0.05)],
+                angles = [(1, 2, 3, 10, 120)]
             )),
             ("chains", N -> pushfree!(lj, N ÷ 5, 
                 ps = [SA[i * lj.bondl * 0.05, 0.0] for i in 1:5], 
@@ -207,7 +223,7 @@ function main(; decorated = true)
             )),
         ]
         Label(menugrid[1, 8], "  Presets:", fontsize = 20, justification = :right)
-        presetmenu::Menu = Menu(menugrid[1, 9], options = options, width = 120, fontsize = 20)
+        presetmenu::Menu = Menu(menugrid[1, 9], options = options, width = 180, fontsize = 20)
         on(presetmenu.selection) do func
             lock(lk) do 
                 N = numberofatoms[]; empty!(lj)
@@ -245,19 +261,19 @@ function main(; decorated = true)
         mcolor = cgrad(:isoluminant_cm_70_c39_n256)[1.0]
 
         histsteps = 1001
-        Label(plotgrid[1, 1], "Temperature", rotation = pi/2, tellheight = false, fontsize = 20)
+        Label(plotgrid[1, 1], "Temperature", rotation = pi/2, tellheight = false, fontsize = 15)
         temperatures = Observable(fill(NaN, histsteps))
         temperature_axis::Axis = Axis(plotgrid[1,2], ylabelsize = 20)
         xlims!(temperature_axis, -1.02histsteps, 0.02histsteps)
         lines!(temperature_axis, -histsteps+1:1:0, temperatures)
 
-        Label(plotgrid[2, 1], "Potential", rotation = pi/2, tellheight = false, fontsize = 20)
+        Label(plotgrid[2, 1], "Potential", rotation = pi/2, tellheight = false, fontsize = 15)
         potentials = Observable(fill(NaN, histsteps))
         potential_axis::Axis = Axis(plotgrid[2,2], ylabelsize = 20)
         xlims!(potential_axis, -1.02histsteps, 0.02histsteps)
         lines!(potential_axis, -histsteps+1:1:0, potentials)
 
-        Label(plotgrid[3, 1], "Pressure", rotation = pi/2, tellheight = false, fontsize = 20)
+        Label(plotgrid[3, 1], "Pressure", rotation = pi/2, tellheight = false, fontsize = 15)
         pressures = Observable(fill(NaN, histsteps))
         pressure_axis::Axis = Axis(plotgrid[3,2], ylabelsize = 20)
         xlims!(pressure_axis, -1.02histsteps, 0.02histsteps)
@@ -267,21 +283,21 @@ function main(; decorated = true)
         # lines!(potential_axis, -histsteps+1:1:0, lift(x -> imfilter(x, KernelFactors.gaussian(10)), potentials), linewidth = 2, color = mcolor)
         # lines!(pressure_axis, -histsteps+1:1:0, lift(x -> imfilter(x, KernelFactors.gaussian(10)), pressures), linewidth = 2, color = mcolor)
 
-        Label(plotgrid[4, 1], "Number of neighbors", rotation = pi/2, tellheight = false, fontsize = 20)
-        nneighbors = lift(node) do lj
-            nbs = [(i,j) for (i,j) in lj.nbs if i != 0 && j != 0 && norm(lj.ps[i] - lj.ps[j]) < 1.5lj.σ]
-            nbs = [first.(nbs); last.(nbs)]
-            count.(isequal.(1:length(lj)), Ref(nbs))
-        end
-        neighbor_axis::Axis = Axis(plotgrid[4,2], xticks = 0:10, yticks = 0:0.2:1, ylabelsize = 20)
-        hist!(neighbor_axis, nneighbors, bins = -0.5:1:11, normalization = :probability)
-        hlines!(neighbor_axis, 0.4, color = :transparent)
+        # Label(plotgrid[4, 1], "Number of neighbors", rotation = pi/2, tellheight = false, fontsize = 15)
+        # nneighbors = lift(node) do lj
+        #     nbs = [(i,j) for (i,j) in lj.nbs if i != 0 && j != 0 && norm(lj.ps[i] - lj.ps[j]) < 1.5lj.σ]
+        #     nbs = [first.(nbs); last.(nbs)]
+        #     count.(isequal.(1:length(lj)), Ref(nbs))
+        # end
+        # neighbor_axis::Axis = Axis(plotgrid[4,2], xticks = 0:10, yticks = 0:0.2:1, ylabelsize = 15)
+        # hist!(neighbor_axis, nneighbors, bins = -0.5:1:11, normalization = :probability)
+        # hlines!(neighbor_axis, 0.4, color = :transparent)
 
-        Label(plotgrid[5, 1], "Distance distribution", rotation = pi/2, tellheight = false, fontsize = 20)
-        distances = lift(lj -> [norm(lj.ps[i] - lj.ps[j]) / lj.σ for (i, j) in lj.nbs if i != 0 && j != 0], node)
-        distance_axis::Axis = Axis(plotgrid[5,2], xticks = MultiplesTicks(6, 1, "σ"), ylabelsize = 20)
-        hist!(distance_axis, distances, bins = 0:0.05:5, normalization = :probability)
-        hlines!(distance_axis, 0.15, color = :transparent)
+        # Label(plotgrid[5, 1], "Distance distribution", rotation = pi/2, tellheight = false, fontsize = 15)
+        # distances = lift(lj -> [norm(lj.ps[i] - lj.ps[j]) / lj.σ for (i, j) in lj.nbs if i != 0 && j != 0], node)
+        # distance_axis::Axis = Axis(plotgrid[5,2], xticks = MultiplesTicks(6, 1, "σ"), ylabelsize = 20)
+        # hist!(distance_axis, distances, bins = 0:0.05:5, normalization = :probability)
+        # hlines!(distance_axis, 0.15, color = :transparent)
 
         colgap!(plotgrid, 1, 10)
 
@@ -308,12 +324,13 @@ function main(; decorated = true)
             ylims!(temperature_axis, paddedextrema(temperatures[], rpad = 0.12, apad = 0.0012))
             ylims!(potential_axis, paddedextrema(potentials[], rpad = 0.12, apad = 0.0012))
             ylims!(pressure_axis, paddedextrema(pressures[], rpad = 0.12, apad = 0.0012))
-            autolimits!(neighbor_axis); autolimits!(distance_axis)
+            # autolimits!(neighbor_axis); 
+            # autolimits!(distance_axis)
         end    
         on(updatePlots!, node)
         
         remove_interactions!(temperature_axis); remove_interactions!(potential_axis); 
-        remove_interactions!(neighbor_axis); remove_interactions!(distance_axis); 
+        # remove_interactions!(neighbor_axis); remove_interactions!(distance_axis); 
 
         function resethistory(event)
             potentials[] .= NaN; 

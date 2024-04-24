@@ -102,7 +102,7 @@ function main(; decorated = true)
 
     lk = ReentrantLock()
 
-    fig = Figure(size = (1600,900), figure_padding = 20)
+    fig = Figure(size = (800,600), figure_padding = 20)
 
     rightarea = fig[1,2] = GridLayout()
     colsize!(fig.layout, 1, Aspect(1, 1.0))
@@ -125,7 +125,8 @@ function main(; decorated = true)
         numberofatoms = Observable(length(lj))
 
         settings = GridLayout(rightarea[1,1])
-        # rowsize!(rightarea, 1, Relative(0.5))
+        rowgap = 7
+
         Label(settings[1, 1], halign = :left, fontsize = 20, text = "Particle settings", tellwidth = false)
         sliderconf1 = (
             (label = "number", range = 1:1:1000, startvalue = length(lj)) => (val -> (numberofatoms[] = val; setnumber(val))),
@@ -133,6 +134,7 @@ function main(; decorated = true)
         )
         on.(last.(sliderconf1), getfield.(SliderGrid(settings[2,1], first.(sliderconf1)...).sliders, :value))
         sizeslider::Slider = contents(settings[2,1])[1].sliders[2]
+        rowgap!(contents(settings[2,1])[1].layout, rowgap)
 
         Label(settings[3, 1], halign = :left, fontsize = 20, text = "Thermostat settings", tellwidth = false)
         sliderconf2 = (
@@ -140,32 +142,39 @@ function main(; decorated = true)
             (label = "strength", range = (0:0.01:10).^3, startvalue = lj.ts) => (val -> (lj.ts = val)),
         )
         on.(last.(sliderconf2), getfield.(SliderGrid(settings[4,1], first.(sliderconf2)...).sliders, :value))
+        rowgap!(contents(settings[4,1])[1].layout, rowgap)
 
         Label(settings[5, 1], halign = :left, fontsize = 20, text = "Internal forces", tellwidth = false)
         sliderconf3 = (
             (label = "Coulomb", range = (0:0.001:10).^2, startvalue = lj.coulomb) => (val -> (lj.coulomb = val)),
             (label = "Lennard-Jones", range = 0:0.01:10, startvalue = lj.ε) => (val -> (lj.ε = val)),
-            (label = "Stillinger-Weber", range = 0:0.01:10, startvalue = lj.swstrength) => (val -> (lj.swstrength = val)),
-            (label = "covalent angle", range = 0:180, startvalue = lj.swangle) => (val -> (lj.swangle = val)),
+            # (label = "Stillinger-Weber", range = 0:0.01:10, startvalue = lj.swstrength) => (val -> (lj.swstrength = val)),
+            # (label = "covalent angle", range = 0:180, startvalue = lj.swangle) => (val -> (lj.swangle = val)),
             (label = "bond strength", range = (0:0.01:10), startvalue = lj.bondk) => (val -> (lj.bondk = val)),
             (label = "bond length", range = (0:0.01:2), startvalue = lj.bondl) => (val -> (lj.bondl = val)),
         )
         on.(last.(sliderconf3), getfield.(SliderGrid(settings[6,1], first.(sliderconf3)...).sliders, :value))
+        rowgap!(contents(settings[6,1])[1].layout, rowgap)
 
         Label(settings[7, 1], halign = :left, fontsize = 20, text = "External forces", tellwidth = false)
         sliderconf4 = (
             (label = "gravity", range = 0:-0.01:-10, startvalue = lj.g) => (val -> (lj.g = val)),
             (label = "voltage", range = (0:0.1:100).^3, startvalue = lj.g) => (val -> (lj.E = val)),
-            (label = "magnetic", range = (0:0.1:100), startvalue = lj.g) => (val -> (lj.B = val)),
+            # (label = "magnetic", range = (0:0.1:100), startvalue = lj.g) => (val -> (lj.B = val)),
             (label = "interactive", range = 1:1:1000, startvalue = mousestrength[]) => (val -> (mousestrength[] = val)),
         )
         on.(last.(sliderconf4), getfield.(SliderGrid(settings[8,1], first.(sliderconf4)...).sliders, :value))
+        rowgap!(contents(settings[8,1])[1].layout, rowgap)
+
 
         Label(settings[9, 1], halign = :left, fontsize = 20, text = "Simulation Controls", tellwidth = false)
         sliderconf5 = (
             (label = "time step", range = logrange(1e-7, 1e-3, length = 1000), startvalue = 1e-4) => (val -> (dt[] = val)),
         )
         on.(last.(sliderconf5), getfield.(SliderGrid(settings[10,1], first.(sliderconf5)...).sliders, :value))
+        rowgap!(contents(settings[10,1])[1].layout, rowgap)
+
+        rowgap!(settings, rowgap)
     end
 
 
@@ -173,48 +182,48 @@ function main(; decorated = true)
     begin
         menugrid = rightarea[2,1] = GridLayout(tellwidth = false, halign = :left)
     
-        startbutton::Button = Button(menugrid[1,1], label = "Start", width = 120, fontsize = 20)
-        on(n -> lock(() -> lj.vs .*= 0, lk), Button(menugrid[1,2], label = "Freeze", width = 120, fontsize = 20).clicks)
+        startbutton::Button = Button(menugrid[1,1:2], label = "Start", width = Relative(1), fontsize = 20)
+        on(n -> lock(() -> lj.vs .*= 0, lk), Button(menugrid[1,3:4], label = "Freeze", width = Relative(1), fontsize = 20).clicks)
 
-        Label(menugrid[1,4], "   place:", fontsize = 20, justification = :right)
-        particlemenu::Menu = Menu(menugrid[1,5], options = ["default", "heavy", "very heavy", "positive", "negative", "polar pair", "neutral pair"], width = 120, fontsize = 20)
-        colgap!(menugrid, 4, 10)
+        # Label(menugrid[2,1], "   place:", fontsize = 20, halign = :right, justification = :right, tellwidth = false)
+        particlemenu::Menu = Menu(menugrid[2,1:2], options = ["Place: default", "Place: heavy", "Place: very heavy", "Place: positive", "Place: negative", "Place: polar pair", "Place: neutral pair"], width = Relative(1), fontsize = 20)
+        # colgap!(menugrid, 4, 10)
         
-        Label(menugrid[1,6], " Color:", fontsize = 20, justification = :right)
-        colormenu::Menu = Menu(menugrid[1,7], options = ["potential", "velocity", "virial", "charge", "nothing"], width = 120, fontsize = 20)
-        colgap!(menugrid, 6, 10)
+        # Label(menugrid[2,3], " Color:", fontsize = 20, halign = :right, justification = :right, tellwidth = false)
+        colormenu::Menu = Menu(menugrid[2,3:4], options = ["Color: potential", "Color: velocity", "Color: virial", "Color: charge", "Color: nothing"], width = Relative(1), fontsize = 20)
+        # colgap!(menugrid, 6, 10)
 
         options = [
-            ("default", N -> pushfree!(lj, N)),
-            ("random neutral", N -> for i in 1:N 
+            ("Preset: default", N -> pushfree!(lj, N)),
+            ("Preset: random neutral", N -> for i in 1:N 
                 m = (rand() + 1) / 2
                 pushfree!(lj, 1, ms = [m], σs = [sqrt(m)])
             end),
-            ("random charge", N -> for i in 1:N 
+            ("Preset: random charge", N -> for i in 1:N 
                 m = (rand() + 1) / 2
                 pushfree!(lj, 1, ms = [m], σs = [sqrt(m)], cs = [2rand()-1])
             end),
-            ("ions", N -> for i in 1:N pushfree!(lj, cs = [-sign(sum(lj.cs) - 1e-10)]) end),
-            ("diatomic", N -> pushfree!(lj, N ÷ 2, 
+            ("Preset: ions", N -> for i in 1:N pushfree!(lj, cs = [-sign(sum(lj.cs) - 1e-10)]) end),
+            ("Preset: diatomic", N -> pushfree!(lj, N ÷ 2, 
                 ps = [SA[lj.bondl * 0.05, 0.0], SA[0.0, 0.0]], 
                 bonds = [(1, 2, 10000.0, 0.05)]
             )),
-            ("polar", N -> pushfree!(lj, N ÷ 2, 
+            ("Preset: polar", N -> pushfree!(lj, N ÷ 2, 
                 ps = [SA[lj.bondl * 0.05, 0.0], SA[0.0, 0.0]], 
                 cs = [1.0, -1.0], bonds = [(1, 2, 10000.0, 0.05)]
             )),
-            ("water", N -> pushfree!(lj, N ÷ 2, 
+            ("Preset: water", N -> pushfree!(lj, N ÷ 2, 
                 σs = [1, 0.35, 0.35], ms = [16, 1, 1], cs = [1.0, -0.5, -0.5], 
                 ps = [SA[0.0, 0.0], lj.bondl * 0.05 * SA[1.0, 0.0], lj.bondl * 0.05 * SA[cosd(120), sind(120)]], 
                 bonds = [(1, 2, 10000.0, 0.05), (1, 3, 10000.0, 0.05)],
                 angles = [(1, 2, 3, 10, 120)]
             )),
-            ("chains", N -> pushfree!(lj, N ÷ 5, 
+            ("Preset: chains", N -> pushfree!(lj, N ÷ 5, 
                 ps = [SA[i * lj.bondl * 0.05, 0.0] for i in 1:5], 
                 bonds = [(1, 2, 10000.0, 0.05), (2, 3, 10000.0, 0.05), (3, 4, 10000.0, 0.05), (4, 5, 10000.0, 0.05)], 
                 angles = [(2, 1, 3, 10, 180), (3, 2, 4, 10, 180), (4, 3, 5, 10, 180)]
             )),
-            ("rings", N -> pushfree!(lj, N ÷ 6, 
+            ("Preset: rings", N -> pushfree!(lj, N ÷ 6, 
                 ps = [lj.bondl * 0.05 * SA[cos(ϕ), sin(ϕ)] for ϕ in 0:2pi/6:6], 
                 bonds = [(1, 2, 10000.0, 0.05), (2, 3, 10000.0, 0.05), (3, 4, 10000.0, 0.05), 
                          (4, 5, 10000.0, 0.05), (5, 6, 10000.0, 0.05), (6, 1, 10000.0, 0.05)],
@@ -222,8 +231,8 @@ function main(; decorated = true)
                           (5, 4, 6, 10, 180), (6, 5, 1, 10, 180), (1, 6, 2, 10, 180)]
             )),
         ]
-        Label(menugrid[1, 8], "  Presets:", fontsize = 20, justification = :right)
-        presetmenu::Menu = Menu(menugrid[1, 9], options = options, width = 180, fontsize = 20)
+        # Label(menugrid[2, 5], "  Presets:", fontsize = 20, halign = :right, justification = :right, tellwidth = false)
+        presetmenu::Menu = Menu(menugrid[2, 5:6], options = options, width = Relative(1), fontsize = 20)
         on(presetmenu.selection) do func
             lock(lk) do 
                 N = numberofatoms[]; empty!(lj)
@@ -231,15 +240,15 @@ function main(; decorated = true)
                 node[] = ensureNeighbors!(deepcopy(lj))
             end
         end
-        colgap!(menugrid, 8, 10)
+        # colgap!(menugrid, 8, 10)
 
-        on(Button(menugrid[1,3], label = "Reset", width = 120, fontsize = 20).clicks) do _
+        on(Button(menugrid[1,5:6], label = "Reset", width = Relative(1), fontsize = 20).clicks) do _
             notify(presetmenu.selection)
         end
 
 
         sps = Observable(0.0); fps = Observable(0); lastnsteps = Observable(0); nframes = Observable(0); lastframe = Observable(time_ns())
-        Label(menugrid[2,10], halign = :right, text = lift((s, f, lj) -> "tps: $(round(Int, s))  fps: $f  N: $(length(lj))", sps, fps, node), tellwidth = false, justification = :right, color = :grey60)
+        Label(menugrid[3,5:6], halign = :right, text = lift((s, f, lj) -> "tps: $(round(Int, s))\nfps: $f\nN: $(length(lj))", sps, fps, node), tellwidth = false, justification = :right, color = :grey60, fontsize = 10)
         on(node) do lj
             nframes[] += 1
             if time_ns() - lastframe[] > 1e9
@@ -248,8 +257,10 @@ function main(; decorated = true)
             end
         end
 
-        controlstext = "Left: pull, Middle: attract all, Right: add new,    W: move up, A: move left, S: move down, D: move right, Q: rotate left, E: rotate right, R: heat all, F: cool all, R: heat local, G: cool local, X: delete, C: repel"
-        Label(menugrid[2,1:9], controlstext, justification = :right, halign = :left, color = :grey60, padding = (0,0,0,0))
+        controlstext = "Left: pull, Middle: attract all, Right: add new, W: move up, A: move left, S: move down, D: move right, Q: rotate left, E: rotate right, R: heat all, F: cool all, T: heat local, G: cool local, X: delete, C: repel"
+        Label(menugrid[3,1:4], controlstext, justification = :left, halign = :left, color = :grey60, padding = (0,0,0,0), fontsize = 10, word_wrap = true)
+        controlstext = ""
+        # Label(menugrid[4,:], controlstext, justification = :right, halign = :left, color = :grey60, padding = (0,0,0,0), fontsize = 10)
         rowgap!(menugrid, 1, 15)
     end
 
@@ -361,16 +372,16 @@ function main(; decorated = true)
             pnode[][N+1:end] .= Ref(SA[NaN, NaN])
             notify(pnode)
 
-            if colormenu.selection[] == "charge"
+            if colormenu.selection[] == "Color: charge"
                 color[][1:N] .= lj.cs
-            elseif colormenu.selection[] == "velocity"
+            elseif colormenu.selection[] == "Color: velocity"
                 color[][1:N] .= 0.5 .* color[][1:N] .+ 0.5 .* norm.(lj.vs)
-            elseif colormenu.selection[] == "potential"
+            elseif colormenu.selection[] == "Color: potential"
                 cs = potentialPerParticle(lj) ./ lj.σs
                 color[][1:N] .= sqrt.(cs .- minimum(cs))
-            elseif colormenu.selection[] == "virial"
+            elseif colormenu.selection[] == "Color: virial"
                 color[][1:N] .= ssqrt.(virialPerParticle(lj))
-            elseif colormenu.selection[] == "nothing"
+            elseif colormenu.selection[] == "Color: nothing"
                 color[][1:N] .= 0
             end
             # if colormenu.selection[] == "virial"
@@ -517,20 +528,20 @@ function main(; decorated = true)
                 lock(lk) do 
                     if length(lj) < maxN && minimum(norm.(Ref(p) .- lj.ps)) > lj.σ
                         s = particlemenu.selection[]
-                        if s == "default"
+                        if s == "Place: default"
                             push!(lj, ps = [p])
-                        elseif s == "positive"
+                        elseif s == "Place: positive"
                             push!(lj, ps = [p], cs = [1], σs = [2])
-                        elseif s == "negative"
+                        elseif s == "Place: negative"
                             push!(lj, ps = [p], cs = [-1], σs = [2])
-                        elseif s == "heavy" && minimum(norm.(Ref(p) .- lj.ps)) > sqrt(10) * lj.σ
+                        elseif s == "Place: heavy" && minimum(norm.(Ref(p) .- lj.ps)) > sqrt(10) * lj.σ
                             push!(lj, ps = [p], ms = [100], σs = [sqrt(10)])
-                        elseif s == "very heavy" && minimum(norm.(Ref(p) .- lj.ps)) > sqrt(10) * lj.σ
+                        elseif s == "Place: very heavy" && minimum(norm.(Ref(p) .- lj.ps)) > sqrt(10) * lj.σ
                             push!(lj, ps = [p], ms = [10000], σs = [sqrt(10)])
-                        elseif s == "polar pair" && length(lj) < maxN - 1
+                        elseif s == "Place: polar pair" && length(lj) < maxN - 1
                             d = normalize(randn(SVec2)) * lj.σ / 2
                             push!(lj, ps = [p + d, p - d], cs = [-0.3, 0.3], ms = [2, 2], bonds = [(1, 2, 10000.0, 0.05)])
-                        elseif s == "neutral pair" && length(lj) < maxN - 1
+                        elseif s == "Place: neutral pair" && length(lj) < maxN - 1
                             d = normalize(randn(SVec2)) * lj.σ / 2
                             push!(lj, ps = [p + d, p - d], cs = [0, 0], ms = [2, 2], bonds = [(1, 2, 10000.0, 0.05)])
                         end

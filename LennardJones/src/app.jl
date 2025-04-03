@@ -95,6 +95,12 @@ end
 # pentagonal crystal: lj 1.8, sw 0.7
 # nitinol: coulomb 0.4, lj 1.3, σ 0.35
 
+function primary_resolution()
+    monitor = GLMakie.GLFW.GetPrimaryMonitor()
+    videomode = GLMakie.MonitorProperties(monitor).videomode
+    return (videomode.width, videomode.height)
+end
+
 function main(; decorated = true)
     lj = LJ(500)
     step!(lj, dt = 0.0)
@@ -102,7 +108,7 @@ function main(; decorated = true)
 
     lk = ReentrantLock()
 
-    fig = Figure(size = (800,600), figure_padding = 20)
+    fig = Figure(size = (decorated ? (800,600) : primary_resolution() .* 2 .÷ 3), figure_padding = 20)
 
     rightarea = fig[1,2] = GridLayout()
     colsize!(fig.layout, 1, Aspect(1, 1.0))
@@ -400,8 +406,8 @@ function main(; decorated = true)
         node[] = ensureNeighbors!(deepcopy(lj))
         colorrange[] = extrema(color[])
 
-        linesegments!(main_axis, lift(lj -> lj.ps[[b[i] for b in lj.bonds for i in 1:2]], node), strokewidth = lift(lj -> 0.1lj.σ, node), color = :grey)
-        main_plot::Scatter{Tuple{Vector{Point{2, Float32}}}} = scatter!(main_axis, pnode, markersize = markersize, strokewidth = 1, color = color, markerspace = :data, colormap = :isoluminant_cm_70_c39_n256, colorrange = colorrange)
+        linesegments!(main_axis, lift(lj -> lj.ps[[b[i] for b in lj.bonds for i in 1:2]], node), linewidth = lift(lj -> 0.1lj.σ, node), color = :grey)
+        main_plot::Scatter{Tuple{Vector{Point{2, Float64}}}} = scatter!(main_axis, pnode, markersize = markersize, strokewidth = 1, color = color, markerspace = :data, colormap = :isoluminant_cm_70_c39_n256, colorrange = colorrange)
     end
 
 
@@ -581,6 +587,7 @@ function main(; decorated = true)
     end
 
     display(screen, fig)
+    !decorated && GLMakie.GLFW.SetWindowPos(screen.glscreen, 0, 0)
 
     fig, main_plot, node, screen, runfunc, renderfunc
 end

@@ -537,9 +537,9 @@ function main(; decorated = true)
                         if s == "Place: default"
                             push!(lj, ps = [p])
                         elseif s == "Place: positive"
-                            push!(lj, ps = [p], cs = [1], σs = [2])
+                            push!(lj, ps = [p], cs = [1])
                         elseif s == "Place: negative"
-                            push!(lj, ps = [p], cs = [-1], σs = [2])
+                            push!(lj, ps = [p], cs = [-1])
                         elseif s == "Place: heavy" && minimum(norm.(Ref(p) .- lj.ps)) > sqrt(10) * lj.σ
                             push!(lj, ps = [p], ms = [100], σs = [sqrt(10)])
                         elseif s == "Place: very heavy" && minimum(norm.(Ref(p) .- lj.ps)) > sqrt(10) * lj.σ

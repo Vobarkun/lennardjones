@@ -50,6 +50,7 @@ function darktheme!()
         ),
         Hist = (cycle = :color, ),
         Lines = (cycle = :color, ),
+        Legend = (backgroundcolor = :grey20, ),
         Axis = (
             backgroundcolor = :grey15,
             xgridcolor = (:white, 0.09),
@@ -101,6 +102,509 @@ function primary_resolution()
     return (videomode.width, videomode.height)
 end
 
+const keymap = (
+    :pullsingle => Mouse.left, :pullall => Mouse.middle, :pushall => Keyboard.c,
+    :spawn => Mouse.right, :delete => Keyboard.x, 
+    :stirleft => Keyboard.q, :stirright => Keyboard.e,
+    :pushleft => Keyboard.a, :pushright => Keyboard.d,
+    :pushup => Keyboard.w, :pushdown => Keyboard.s,
+    :cool => Keyboard.g, :coolall => Keyboard.f, 
+    :heat => Keyboard.t,  :heatall => Keyboard.r, 
+)
+
+struct Event
+    type::Symbol
+    position::SVector{2, Float64}
+    data::Float64
+    
+    function Event(type, position = SA[NaN, NaN], data = NaN)
+        new(type, position, data)
+    end
+end
+
+mutable struct InteractiveLJ
+    lj::LJ
+    outlj::LJ
+
+    interactionIndex::Int
+    mouseposition::SVector{2, Float64}
+    mousestrength::Float64
+    dt::Float64
+    interactions::Dict{Symbol, Bool}
+    lastaction::Float64
+    placetype::Symbol
+    preset::Symbol
+    
+    running::Bool
+    terminate::Bool
+    events::Channel{Event}
+end
+
+function InteractiveLJ(N)
+    lj = LJ(N)
+    events = Channel{Event}(Inf)
+    interactions = Dict(first.(keymap) .=> false)
+
+    InteractiveLJ(lj, deepcopy(lj), 1, SA[0.0, 0.0], 500.0, 1e-4, interactions, time(), :default, :default, false, false, events)
+end
+
+function handleInteractions!(sim::InteractiveLJ)
+    lj = sim.lj
+    dt = sim.dt
+    strength = sim.mousestrength
+    mousepos = sim.mouseposition
+    index = sim.interactionIndex
+    interactions = sim.interactions
+
+    if sim.running
+        if interactions[:pullsingle] && index <= length(lj)
+            lj.vs[index] += 200 * dt * (mousepos - lj.ps[index])# / lj.ms[index]
+        end
+        if interactions[:pullall]
+            lj.vs .+= 0.04strength * dt .* (Ref(mousepos) .- lj.ps) ./ (0.05 .+ norm.(Ref(mousepos) .- lj.ps)).^2 ./ lj.ms
+            lj.vs .*= 1 .- (0.1strength * dt) .* exp.(-10 .* norm.(lj.ps .- Ref(mousepos)).^2)
+        end
+        if interactions[:pushall]
+            lj.vs .+= 30strength * dt .* exp.(-200 .* norm.(lj.ps .- Ref(mousepos)).^2) .* (lj.ps .- Ref(mousepos)) ./ lj.ms
+        end
+        if interactions[:cool]
+            lj.vs .*= max.(0, 1 .- (0.2strength * dt) .* exp.(-100 .* norm.(lj.ps .- Ref(mousepos)).^2))
+        end
+        if interactions[:coolall]
+            lj.vs .*= max.(0, 1 .- (0.05strength * dt))
+        end
+        if interactions[:heat]
+            lj.vs .+= 2strength * dt .* exp.(-100 .* norm.(lj.ps .- Ref(mousepos)).^2) .* randn.(SVec2) ./ lj.ms
+        end
+        if interactions[:heatall]
+            lj.vs .+= 1strength * dt .* randn.(SVec2) ./ lj.ms
+        end
+        if interactions[:stirleft]
+            lj.vs .+= strength / 5 * dt .* exp.(-20 .* norm.(lj.ps .- Ref(mousepos)).^2) .* Ref(SA[0.7 1; -1 0.7]) .* (Ref(mousepos) .- lj.ps) ./ lj.ms
+        end
+        if interactions[:stirright]
+            lj.vs .+= strength / 5 * dt .* exp.(-20 .* norm.(lj.ps .- Ref(mousepos)).^2) .* Ref(SA[0.7 -1; 1 0.7]) .* (Ref(mousepos) .- lj.ps) ./ lj.ms
+        end
+        for (i, dir) in zip((:pushleft, :pushright, :pushup, :pushdown), (SA[-1, 0], SA[1, 0], SA[0, 1], SA[0, -1]))
+            if interactions[i]
+                lj.vs .+= 0.05strength .* dt .* Ref(dir) ./ lj.ms
+            end
+        end
+    end
+    if time() - sim.lastaction > 0.05
+        if interactions[:spawn]
+            p = mousepos
+            maxN = 1000
+            if length(lj) < maxN && minimum(norm.(Ref(p) .- lj.ps)) > lj.σ
+                s = sim.placetype
+                if s == :default
+                    push!(lj, ps = [p])
+                elseif s == :positive
+                    push!(lj, ps = [p], cs = [1])
+                elseif s == :negative
+                    push!(lj, ps = [p], cs = [-1])
+                elseif s == :heavy && minimum(norm.(Ref(p) .- lj.ps)) > sqrt(10) * lj.σ
+                    push!(lj, ps = [p], ms = [100], σs = [sqrt(10)])
+                elseif s == :veryheavy && minimum(norm.(Ref(p) .- lj.ps)) > sqrt(10) * lj.σ
+                    push!(lj, ps = [p], ms = [10000], σs = [sqrt(10)])
+                elseif s == :polarpair && length(lj) < maxN - 1
+                    d = normalize(randn(SVec2)) * lj.σ / 2
+                    push!(lj, ps = [p + d, p - d], cs = [-0.3, 0.3], ms = [2, 2], bonds = [(1, 2, 10000.0, 0.05)])
+                elseif s == :neutralpair && length(lj) < maxN - 1
+                    d = normalize(randn(SVec2)) * lj.σ / 2
+                    push!(lj, ps = [p + d, p - d], cs = [0, 0], ms = [2, 2], bonds = [(1, 2, 10000.0, 0.05)])
+                end
+            end
+            sim.lastaction = time()
+        end
+        if interactions[:delete] && length(lj) > 1
+            deleteat!(lj, argmin(norm.(lj.ps .- (mousepos,))))
+            sim.lastaction = time()
+        end
+    end
+    ensureNeighbors!(sim.lj)
+end
+
+function reset!(sim)
+    lj = sim.lj
+    N = length(lj)
+    if sim.preset == :default
+        empty!(lj)
+        pushfree!(lj, N)
+    elseif sim.preset == :randomneutral
+        empty!(lj)
+        for i in 1:N 
+            m = (rand() + 1) / 2
+            pushfree!(lj, 1, ms = [m], σs = [sqrt(m)])
+        end
+    elseif sim.preset == :randomcharge
+        empty!(lj)
+        for i in 1:N 
+            m = (rand() + 1) / 2
+            pushfree!(lj, 1, ms = [m], σs = [sqrt(m)], cs = [2rand()-1])
+        end
+    elseif sim.preset == :ions
+        empty!(lj)
+        for i in 1:N 
+            pushfree!(lj, cs = [-sign(sum(lj.cs) - 1e-10)]) 
+        end
+    elseif sim.preset == :diatomic
+        empty!(lj)
+        pushfree!(lj, N ÷ 2, 
+            ps = [SA[lj.bondl * 0.05, 0.0], SA[0.0, 0.0]], 
+            bonds = [(1, 2, 10000.0, 0.05)]
+        )
+    elseif sim.preset == :polar
+        empty!(lj)
+        pushfree!(lj, N ÷ 2, 
+            ps = [SA[lj.bondl * 0.05, 0.0], SA[0.0, 0.0]], 
+            cs = [1.0, -1.0], bonds = [(1, 2, 10000.0, 0.05)]
+        )
+    elseif sim.preset == :chains
+        empty!(lj)
+        pushfree!(lj, N ÷ 5, 
+            ps = [SA[i * lj.bondl * 0.025, 0.0] for i in 1:5], 
+            bonds = [(1, 2, 10000.0, 0.025), (2, 3, 10000.0, 0.025), (3, 4, 10000.0, 0.025), (4, 5, 10000.0, 0.025)], 
+            angles = [(2, 1, 3, 10, 180), (3, 2, 4, 10, 180), (4, 3, 5, 10, 180)]
+        )
+    elseif sim.preset == :rings
+        empty!(lj)
+        pushfree!(lj, N ÷ 6, 
+            ps = [lj.bondl * 0.025 * SA[cos(ϕ), sin(ϕ)] for ϕ in 0:2pi/6:6], 
+            bonds = [(1, 2, 10000.0, 0.025), (2, 3, 10000.0, 0.025), (3, 4, 10000.0, 0.025), 
+                        (4, 5, 10000.0, 0.025), (5, 6, 10000.0, 0.025), (6, 1, 10000.0, 0.025)],
+            angles = [(2, 1, 3, 10, 180), (3, 2, 4, 10, 180), (4, 3, 5, 10, 180), 
+                        (5, 4, 6, 10, 180), (6, 5, 1, 10, 180), (1, 6, 2, 10, 180)]
+        )
+    end
+    ensureNeighbors!(lj)
+end
+
+function start(sim::InteractiveLJ)
+    function runfunc(sim)
+        lj = sim.lj
+        t = time()
+        n = 0
+        while true
+            if sim.terminate
+                return
+            end
+            for i in 1:100
+                while isready(sim.events)
+                    event = take!(sim.events)
+
+                    if event.type == :changenumber
+                        while length(lj) > event.data
+                            deleteat!(lj, length(lj))
+                        end
+                        pushfree!(lj, round(Int, event.data - length(lj)))
+                    elseif event.type == :reset
+                        reset!(sim)
+                    elseif event.type == :freeze
+                        sim.lj.vs .*= 0
+                    end
+                end
+                handleInteractions!(sim)
+                if sim.running
+                    step!(lj, dt = sim.dt)
+                    vrescale!(lj, dt = sim.dt)
+                end
+                n += 1
+                if n > 1500 * (time() - t) - 0.25
+                    break
+                end
+            end
+            n = 0
+            t = time()
+            sim.outlj = deepcopy(ensureNeighbors!(lj))
+            sleep(1e-3)
+        end
+    end
+    Threads.@spawn runfunc(sim)
+end
+
+function stop(sim::InteractiveLJ)
+    sim.terminate = true
+end
+
+function makesettings(gridpos, sim)
+    settings = GridLayout(gridpos)
+    rowgap = 7
+    
+    Label(settings[1, 1], halign = :left, fontsize = 20, text = "Particle settings", tellwidth = false)
+    sliderconf1 = (
+        (label = "number", range = 1:1:1000, startvalue = length(sim.lj)) => (val -> put!(sim.events, Event(:changenumber, SA[NaN, NaN], 1.0val))),
+        (label = "size", range = 0.01:0.0001:0.2, startvalue = sim.lj.σ) => (val -> (sim.σ = val)),
+    )
+    on.(last.(sliderconf1), getfield.(SliderGrid(settings[2,1], first.(sliderconf1)...).sliders, :value))
+    sizeslider::Slider = contents(settings[2,1])[1].sliders[2]
+    rowgap!(contents(settings[2,1])[1].layout, rowgap)
+
+    Label(settings[3, 1], halign = :left, fontsize = 20, text = "Thermostat settings", tellwidth = false)
+    sliderconf2 = (
+        (label = "temperature", range = (0:0.001:2).^log2(10), startvalue = sim.lj.T) => val -> (sim.lj.T = val),
+        (label = "strength", range = (0:0.01:10).^3, startvalue = sim.lj.ts) => (val -> (sim.lj.ts = val)),
+    )
+    on.(last.(sliderconf2), getfield.(SliderGrid(settings[4,1], first.(sliderconf2)...).sliders, :value))
+    rowgap!(contents(settings[4,1])[1].layout, rowgap)
+
+    Label(settings[5, 1], halign = :left, fontsize = 20, text = "Internal forces", tellwidth = false)
+    sliderconf3 = (
+        (label = "Coulomb", range = (0:0.001:10).^2, startvalue = sim.lj.coulomb) => (val -> (sim.lj.coulomb = val)),
+        (label = "Lennard-Jones", range = 0:0.01:10, startvalue = sim.lj.ε) => (val -> (sim.lj.ε = val)),
+        # (label = "Stillinger-Weber", range = 0:0.01:10, startvalue = sim.lj.swstrength) => (val -> (sim.lj.swstrength = val)),
+        # (label = "covalent angle", range = 0:180, startvalue = sim.lj.swangle) => (val -> (sim.lj.swangle = val)),
+        (label = "bond strength", range = (0:0.01:10), startvalue = sim.lj.bondk) => (val -> (sim.lj.bondk = val)),
+        (label = "bond length", range = (0:0.01:2), startvalue = sim.lj.bondl) => (val -> (sim.lj.bondl = val)),
+    )
+    on.(last.(sliderconf3), getfield.(SliderGrid(settings[6,1], first.(sliderconf3)...).sliders, :value))
+    rowgap!(contents(settings[6,1])[1].layout, rowgap)
+
+    Label(settings[7, 1], halign = :left, fontsize = 20, text = "External forces", tellwidth = false)
+    sliderconf4 = (
+        (label = "gravity", range = 0:-0.01:-10, startvalue = sim.lj.g) => (val -> (sim.lj.g = val)),
+        (label = "voltage", range = (0:0.1:100).^3, startvalue = sim.lj.g) => (val -> (sim.lj.E = val)),
+        # (label = "magnetic", range = (0:0.1:100), startvalue = sim.lj.g) => (val -> (sim.lj.B = val)),
+        (label = "interactive", range = 1:1:1000, startvalue = sim.mousestrength) => (val -> (sim.mousestrength = val)),
+    )
+    on.(last.(sliderconf4), getfield.(SliderGrid(settings[8,1], first.(sliderconf4)...).sliders, :value))
+    rowgap!(contents(settings[8,1])[1].layout, rowgap)
+
+
+    Label(settings[9, 1], halign = :left, fontsize = 20, text = "Simulation Controls", tellwidth = false)
+    sliderconf5 = (
+        (label = "time step", range = logrange(1e-7, 1e-3, length = 1000), startvalue = 1e-4) => (val -> (sim.dt = val)),
+    )
+    on.(last.(sliderconf5), getfield.(SliderGrid(settings[10,1], first.(sliderconf5)...).sliders, :value))
+    rowgap!(contents(settings[10,1])[1].layout, rowgap)
+
+    rowgap!(settings, rowgap)
+end
+
+function main2()
+    sim = InteractiveLJ(500)
+    node = Observable(sim.outlj)
+    
+    fig = Figure(size = (1200, 700))
+
+    makesettings(fig[1,2][1,1], sim)
+
+    main_axis::Axis = Axis(fig[1,1], aspect = DataAspect())
+    xlims!(main_axis, -1.03, 1.03); ylims!(main_axis, -1.03, 1.03); hidedecorations!(main_axis)
+    remove_interactions!(main_axis)
+    colsize!(fig.layout, 1, Aspect(1, 1.0))
+
+    color = Observable(zeros(1000))
+    colorrange = Observable((0.0, 1.0))
+    positions = Observable(fill(SA[0.0,0.0], 1000))
+    markersize = Observable(fill(node[].σ, 1000))
+    colorby = Observable(:potential)
+    function plotfunc(lj)
+        N = length(lj)
+        positions[][1:N] .= lj.ps
+        positions[][N+1:end] .= Ref(SA[NaN, NaN])
+        notify(positions)
+
+        cs = potentialPerParticle(lj) ./ lj.σs
+        color[][1:N] .= sqrt.(cs .- minimum(cs))
+
+        if colorby[] == :charge
+            color[][1:N] .= lj.cs
+        elseif colorby[] == :velocity
+            color[][1:N] .= 0.5 .* color[][1:N] .+ 0.5 .* norm.(lj.vs)
+        elseif colorby[] == :potential
+            cs = potentialPerParticle(lj) ./ lj.σs
+            color[][1:N] .= sqrt.(cs .- minimum(cs))
+        elseif colorby[] == :virial
+            color[][1:N] .= ssqrt.(virialPerParticle(lj))
+        elseif colorby[] == :nothing
+            color[][1:N] .= 0
+        end
+    colorrange[] = (0.8colorrange[][1] + 0.2minimum(color[][1:N]), 0.8colorrange[][2] + 0.2maximum(color[][1:N]))
+        notify(color)
+
+        if any(markersize[][i] != lj.σ * lj.σs[i] for i in 1:N)
+            markersize[][1:N] .= lj.σ .* lj.σs
+            notify(markersize)
+        end
+    end
+    on(plotfunc, node) 
+    node[] = sim.outlj
+    colorrange[] = extrema(color[])
+
+    main_plot = scatter!(main_axis, positions, 
+        markersize = markersize, strokewidth = 1, color = color, 
+        markerspace = :data, colormap = :isoluminant_cm_70_c39_n256, 
+        colorrange = colorrange
+    )
+    scatter!(main_axis, 
+        lift(lj -> (i = clamp(sim.interactionIndex, 1, length(lj)); lj.ps[i:i]), node), 
+        markersize = lift(lj -> 1.05lj.σ, node), markerspace = :data, 
+        color = lift(lj -> ifelse(sim.interactions[:pullsingle], :red, :transparent), node)
+    )
+
+    menugrid = GridLayout(fig[1,2][2,1], tellwidth = false, tellheight = true, halign = :left)
+    startbutton = Button(menugrid[1,1:2], label = "Start", width = Relative(1), fontsize = 20)
+    on(Button(menugrid[1,3:4], label = "Freeze", width = Relative(1), fontsize = 20).clicks) do _
+        put!(sim.events, Event(:freeze))
+    end
+
+    particlemenu = Menu(menugrid[2,1:2], width = Relative(1), fontsize = 20,
+        options = [
+            ("Place: default", :default),
+            ("Place: heavy", :heavy),
+            ("Place: very heavy", :veryheavy),
+            ("Place: positive", :positive),
+            ("Place: negative", :negative),
+            ("Place: polar pair", :polarpair),
+            ("Place: neutral pair", :neutralpair)
+        ]
+    )
+    on(x -> sim.placetype = x, particlemenu.selection)
+
+    colormenu = Menu(menugrid[2,3:4], width = Relative(1), fontsize = 20, 
+        options = [
+            ("Color: potential", :potential), 
+            ("Color: velocity", :velocity),
+            ("Color: virial", :virial), 
+            ("Color: charge", :charge), 
+            ("Color: nothing", :nothing)
+        ]
+    )
+    on(x -> colorby[] = x, colormenu.selection)
+
+    presetmenu::Menu = Menu(menugrid[2, 5:6], width = Relative(1), fontsize = 20,
+        options = [
+            ("Preset: default", :default),
+            ("Preset: random neutral", :randomneutral),
+            ("Preset: random charge", :randomcharge),
+            ("Preset: ions", :ions),
+            ("Preset: diatomic", :diatomic),
+            ("Preset: polar", :polar),
+            ("Preset: chains", :chains),
+            ("Preset: rings", :rings)
+        ]
+    )
+    on(presetmenu.selection) do sel
+        sim.preset = sel
+        put!(sim.events, Event(:reset))
+    end
+    # colgap!(menugrid, 8, 10)
+
+    on(Button(menugrid[1,5:6], label = "Reset", width = Relative(1), fontsize = 20).clicks) do _
+        put!(sim.events, Event(:reset))
+    end
+
+
+    sps = Observable(0.0); fps = Observable(0); lastnsteps = Observable(0); nframes = Observable(0); lastframe = Observable(time_ns())
+    Label(menugrid[3,5:6], halign = :right, 
+        text = updateevery(lift((s, f, lj) -> "tps: $(round(Int, s))\nfps: $f\nN: $(length(lj))", sps, fps, node), 0.2), 
+        tellwidth = false, justification = :right, color = :grey60, fontsize = 10
+    )
+    on(node) do lj
+        nframes[] += 1
+        if time_ns() - lastframe[] > 1e9
+            sps[] = (lj.nsteps - lastnsteps[]) / (time_ns() - lastframe[]) * 1e9
+            lastnsteps[] = lj.nsteps; fps[] = nframes[]; nframes[] = 0; lastframe[] = time_ns()
+        end
+    end
+
+    controlstext = "Left: pull, Middle: attract all, Right: add new, W: move up, A: move left, S: move down, D: move right, Q: rotate left, E: rotate right, R: heat all, F: cool all, T: heat local, G: cool local, X: delete, C: repel"
+    Label(menugrid[3,1:4], controlstext, justification = :left, halign = :left, color = :grey60, padding = (0,0,0,0), fontsize = 10, word_wrap = true)
+    controlstext = ""
+    # Label(menugrid[4,:], controlstext, justification = :right, halign = :left, color = :grey60, padding = (0,0,0,0), fontsize = 10)
+    rowgap!(menugrid, 1, 15)
+
+        
+    begin
+        plotgrid = GridLayout(fig[1,2][3,1], alignmode = Outside())
+        rowgap!(plotgrid, 5)
+        mcolor = cgrad(:isoluminant_cm_70_c39_n256)[1.0]
+
+        histsteps = 1001
+        axis = Axis(plotgrid[1,1], ylabelsize = 20, xticklabelsvisible = false)
+        xlims!(axis, -1.02histsteps, 0.02histsteps)
+        
+        temperatures = Observable(fill(NaN, histsteps))
+        lines!(axis, -histsteps+1:1:0, temperatures, color = Makie.wong_colors()[1], label = "Kinetische Energie")
+        potentials = Observable(fill(NaN, histsteps))
+        lines!(axis, -histsteps+1:1:0, potentials, color = Makie.wong_colors()[2], label = "Potenzielle Energie")
+        pressures = Observable(fill(NaN, histsteps))
+        lines!(axis, -histsteps+1:1:0, pressures, color = Makie.wong_colors()[3], label = "Druck")
+        Legend(plotgrid[2,1], axis, position = :lt, orientation = :horizontal, framevisible = false, tellwidth = false)
+
+        function updatePlots(lj)
+            T = temperature(lj)
+            if T != temperatures[][end]
+                temperatures[][1:end-1] .= temperatures[][2:end]
+                temperatures[][end] = T
+                notify(temperatures)
+            end
+            V = potential(lj)
+            if V != potentials[][end] 
+                potentials[][1:end-1] .= potentials[][2:end]
+                potentials[][end] = V
+                notify(potentials)
+            end
+            P = T / 4 + virial(lj) / 8 / length(lj)
+            if P != pressures[][end]
+                pressures[][1:end-1] .= pressures[][2:end]
+                pressures[][end] = P
+                notify(pressures)
+            end
+            
+            reset_limits!(axis)
+            # ylims!(temperature_axis, paddedextrema(temperatures[], rpad = 0.12, apad = 0.0012))
+            # ylims!(potential_axis, paddedextrema(potentials[], rpad = 0.12, apad = 0.0012))
+            # ylims!(pressure_axis, paddedextrema(pressures[], rpad = 0.12, apad = 0.0012))
+        end    
+        on(updatePlots, node)
+        
+        remove_interactions!(axis)
+        onmouseleftdown(axis.mouseeventhandle) do _
+            potentials[] .= NaN; 
+            temperatures[] .= NaN; 
+            pressures[] .= NaN; 
+        end
+    end
+
+
+    on(events(main_axis).mousebutton) do event
+        if event.button == Mouse.left && event.action == Mouse.press
+            sim.interactionIndex = argmin(norm.(sim.outlj.ps .- (mouseposition(main_axis),)))
+        end
+    end
+
+    function renderfunc(x)
+        node[] = sim.outlj
+        for (name, key) in keymap
+            if key isa Keyboard.Button || is_mouseinside(main_axis) || sim.interactions[name]
+                sim.interactions[name] = ispressed(main_axis, key)
+            end
+        end
+        sim.mouseposition = SVector{2, Float64}(mouseposition(main_axis))
+    end
+
+    on(startbutton.clicks) do n
+        sim.running = !sim.running
+        startbutton.label = sim.running ? "Stop" : "Start"
+    end
+
+    screen::GLMakie.Screen{GLMakie.GLFW.Window} = GLMakie.Screen(renderloop = GLMakie.fps_renderloop, framerate = 60)
+    on(renderfunc, screen.render_tick)
+    on(screen.window_open) do val
+        if !val
+            stop(sim)
+        end
+    end
+
+    display(screen, fig)
+    GLMakie.GLFW.SetWindowPos(screen.glscreen, 0, 0)
+    start(sim)
+    screen
+end
+
+
 function main(; decorated = true)
     lj = LJ(500)
     step!(lj, dt = 0.0)
@@ -108,7 +612,7 @@ function main(; decorated = true)
 
     lk = ReentrantLock()
 
-    fig = Figure(size = (decorated ? (800,600) : primary_resolution() .* 2 .÷ 3), figure_padding = 20)
+    fig = Figure(size = (decorated ? (1200,800) : primary_resolution() .* 2 .÷ 3), figure_padding = 20)
 
     rightarea = fig[1,2] = GridLayout()
     colsize!(fig.layout, 1, Aspect(1, 1.0))
@@ -218,12 +722,12 @@ function main(; decorated = true)
                 ps = [SA[lj.bondl * 0.05, 0.0], SA[0.0, 0.0]], 
                 cs = [1.0, -1.0], bonds = [(1, 2, 10000.0, 0.05)]
             )),
-            ("Preset: water", N -> pushfree!(lj, N ÷ 2, 
-                σs = [1, 0.35, 0.35], ms = [16, 1, 1], cs = [1.0, -0.5, -0.5], 
-                ps = [SA[0.0, 0.0], lj.bondl * 0.05 * SA[1.0, 0.0], lj.bondl * 0.05 * SA[cosd(120), sind(120)]], 
-                bonds = [(1, 2, 10000.0, 0.05), (1, 3, 10000.0, 0.05)],
-                angles = [(1, 2, 3, 10, 120)]
-            )),
+            # ("Preset: water", N -> pushfree!(lj, N ÷ 2, 
+            #     σs = [1, 0.35, 0.35], ms = [16, 1, 1], cs = [1.0, -0.5, -0.5], 
+            #     ps = [SA[0.0, 0.0], lj.bondl * 0.05 * SA[1.0, 0.0], lj.bondl * 0.05 * SA[cosd(120), sind(120)]], 
+            #     bonds = [(1, 2, 10000.0, 0.05), (1, 3, 10000.0, 0.05)],
+            #     angles = [(1, 2, 3, 10, 120)]
+            # )),
             ("Preset: chains", N -> pushfree!(lj, N ÷ 5, 
                 ps = [SA[i * lj.bondl * 0.05, 0.0] for i in 1:5], 
                 bonds = [(1, 2, 10000.0, 0.05), (2, 3, 10000.0, 0.05), (3, 4, 10000.0, 0.05), (4, 5, 10000.0, 0.05)], 
@@ -496,18 +1000,14 @@ function main(; decorated = true)
     function runfunc()
         while true
             try
-                t = time_ns()
-
-                @lock lk begin 
-                    step!(lj, dt = dt[])
-                    vrescale!(lj, dt = dt[])
-                    handleInteractions!(lj, interactions, interactionIndex[], mousepos[], mousestrength[], dt[])
+                for _ in 1:50
+                    @lock lk begin 
+                        step!(lj, dt = dt[])
+                        vrescale!(lj, dt = dt[])
+                        handleInteractions!(lj, interactions, interactionIndex[], mousepos[], mousestrength[], dt[])
+                    end
                 end
-                
-                u = time_ns()
-                while time_ns() - u < 2e4 end
-                while time_ns() - t < 1e5 end
-
+                sleep(1e-3)
                 if !running[]
                     return
                 end
@@ -569,7 +1069,7 @@ function main(; decorated = true)
         end
     end
     
-    screen::GLMakie.Screen{GLMakie.GLFW.Window} = GLMakie.Screen(renderloop = GLMakie.renderloop, framerate = 120, decorated = decorated)
+    screen::GLMakie.Screen{GLMakie.GLFW.Window} = GLMakie.Screen(renderloop = GLMakie.renderloop, framerate = 60, decorated = decorated)
     on(renderfunc, screen.render_tick)
 
     on(screen.window_open) do val

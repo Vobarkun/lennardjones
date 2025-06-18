@@ -13,5 +13,6 @@ if args["darktheme"]
     LennardJones.darktheme!()
 end
 
-fig, plt, node, screen = LennardJones.main(decorated = !args["borderless"])
+# fig, plt, node, screen = LennardJones.main(decorated = !args["borderless"])
+screen = LennardJones.main2()
 wait(screen)

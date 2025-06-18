@@ -213,10 +213,8 @@ function forces!(lj::LJ; cutoff = Inf)
     if swstrength != 0
         for i in 1:length(lj)
             for j in nblist[i]
-                j == 0 && break
                 if norm(ps[i] - ps[j]) < 1.7σ
                     for k in nblist[i]
-                        k == 0 && break
                         if j < k
                             f = swstrength * swforce(ps[i], ps[j], ps[k], 1.7σ, swangle)
                             fs[i] += f[1]; fs[j] += f[2]; fs[k] += f[3]
@@ -228,7 +226,7 @@ function forces!(lj::LJ; cutoff = Inf)
     end
 
     for (i, j) in nbs
-        if i > 0 && j > 0 && !bonded[i,j]
+        if !bonded[i,j]
             v = ps[j] - ps[i]
             nv = norm(v)
             if nv < cutoff
@@ -291,7 +289,8 @@ function neighbors!(lj::LJ; cutoff = 0.0)
     end
     cutoff2 = cutoff^2
 
-    lj.nbs .= Ref((0, 0))
+    empty!(lj.nbs)
+    # lj.nbs .= Ref((0, 0))
 
     if length(lj) == 0
         return lj.nbs
@@ -301,7 +300,6 @@ function neighbors!(lj::LJ; cutoff = 0.0)
     
     dirs = CartesianIndex.(SA[(0, 0), (1, 0), (1, 1), (0, 1), (1, -1)])
     
-    n = 0
     @inbounds for I in CartesianIndices(cells)
         isempty(cells[I]) && continue
         for D in dirs
@@ -310,36 +308,20 @@ function neighbors!(lj::LJ; cutoff = 0.0)
                 if I != J || i < j
                     v = p - q
                     if dot(v, v) < cutoff2
-                        n += 1
-                        if n <= length(lj.nbs)
-                            lj.nbs[n] = (i, j)
-                        else
-                            push!(lj.nbs, (i, j))
-                        end
+                        push!(lj.nbs, (i, j))
                     end
                 end
             end
         end
     end
-    
-    fill!.(lj.nblist, 0)
+    empty!.(lj.nblist)
     if length(lj.nblist) < length(lj)
         append!(lj.nblist, [Int[] for i in length(lj.nblist)+1:length(lj)])
     end
     for (i, j) in lj.nbs
         if i > 0 && j > 0
-            n = findfirst(isequal(0), lj.nblist[i])
-            if isnothing(n)
-                push!(lj.nblist[i], j)
-            else
-                lj.nblist[i][n] = j
-            end
-            n = findfirst(isequal(0), lj.nblist[j])
-            if isnothing(n)
-                push!(lj.nblist[j], i)
-            else
-                lj.nblist[j][n] = i
-            end
+            push!(lj.nblist[i], j)
+            push!(lj.nblist[j], i)
         end
     end
 
@@ -413,7 +395,7 @@ function potentialPerParticle(lj::LJ)
     
     Es = zeros(length(lj))
     for (i, j) in nbs
-        if i > 0 && j > 0 && !bonded[i,j]
+        if !bonded[i,j]
             v = ps[j] - ps[i]
             nv = norm(v)
             if nv < cutoff
@@ -426,10 +408,8 @@ function potentialPerParticle(lj::LJ)
     if swstrength != 0
         for i in 1:length(lj)
             for j in nblist[i]
-                j == 0 && break
                 if norm(ps[i] - ps[j]) < 1.7σ
                     for k in nblist[i]
-                        k == 0 && break
                         if j < k
                             E = swstrength * swpotential(ps[i], ps[j], ps[k], 1.7σ, swangle)
                             Es[i] += E / 3; Es[j] += E / 3; Es[k] += E / 3

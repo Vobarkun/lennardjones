@@ -27,7 +27,7 @@ Base.@kwdef mutable struct LJ
     E::Float64 = 0.0
     B::Float64 = 0.0
     
-    T::Float64 = 0.0
+    T::Float64 = 0.4
     ts::Float64 = 1.0
     
     nsteps::Int = 0

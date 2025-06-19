@@ -103,8 +103,8 @@ function primary_resolution()
 end
 
 const keymap = (
-    :pullsingle => Mouse.left, :pullall => Mouse.middle, :pushall => Keyboard.c,
-    :spawn => Mouse.right, :delete => Keyboard.x, 
+    :pullsingle => Mouse.right, :pullall => Mouse.middle, :pushall => Keyboard.c,
+    :spawn => Mouse.left, :delete => Keyboard.x, 
     :stirleft => Keyboard.q, :stirright => Keyboard.e,
     :pushleft => Keyboard.a, :pushright => Keyboard.d,
     :pushup => Keyboard.w, :pushdown => Keyboard.s,
@@ -158,7 +158,7 @@ function handleInteractions!(sim::InteractiveLJ)
 
     if sim.running
         if interactions[:pullsingle] && index <= length(lj)
-            lj.vs[index] += 200 * dt * (mousepos - lj.ps[index])# / lj.ms[index]
+            lj.vs[index] += strength * dt * (mousepos - lj.ps[index])# / lj.ms[index]
         end
         if interactions[:pullall]
             lj.vs .+= 0.04strength * dt .* (Ref(mousepos) .- lj.ps) ./ (0.05 .+ norm.(Ref(mousepos) .- lj.ps)).^2 ./ lj.ms
@@ -300,6 +300,8 @@ function start(sim::InteractiveLJ)
                         pushfree!(lj, round(Int, event.data - length(lj)))
                     elseif event.type == :reset
                         reset!(sim)
+                    elseif event.type == :setindex
+                        sim.interactionIndex = argmin(norm.(sim.lj.ps .- (sim.mouseposition,)))
                     elseif event.type == :freeze
                         sim.lj.vs .*= 0
                     end
@@ -327,67 +329,143 @@ function stop(sim::InteractiveLJ)
     sim.terminate = true
 end
 
-function makesettings(gridpos, sim)
-    settings = GridLayout(gridpos)
-    rowgap = 7
-    
-    Label(settings[1, 1], halign = :left, fontsize = 20, text = "Particle settings", tellwidth = false)
-    sliderconf1 = (
-        (label = "number", range = 1:1:1000, startvalue = length(sim.lj)) => (val -> put!(sim.events, Event(:changenumber, SA[NaN, NaN], 1.0val))),
-        (label = "size", range = 0.01:0.0001:0.2, startvalue = sim.lj.σ) => (val -> (sim.σ = val)),
-    )
-    on.(last.(sliderconf1), getfield.(SliderGrid(settings[2,1], first.(sliderconf1)...).sliders, :value))
-    sizeslider::Slider = contents(settings[2,1])[1].sliders[2]
-    rowgap!(contents(settings[2,1])[1].layout, rowgap)
-
-    Label(settings[3, 1], halign = :left, fontsize = 20, text = "Thermostat settings", tellwidth = false)
-    sliderconf2 = (
-        (label = "temperature", range = (0:0.001:2).^log2(10), startvalue = sim.lj.T) => val -> (sim.lj.T = val),
-        (label = "strength", range = (0:0.01:10).^3, startvalue = sim.lj.ts) => (val -> (sim.lj.ts = val)),
-    )
-    on.(last.(sliderconf2), getfield.(SliderGrid(settings[4,1], first.(sliderconf2)...).sliders, :value))
-    rowgap!(contents(settings[4,1])[1].layout, rowgap)
-
-    Label(settings[5, 1], halign = :left, fontsize = 20, text = "Internal forces", tellwidth = false)
-    sliderconf3 = (
-        (label = "Coulomb", range = (0:0.001:10).^2, startvalue = sim.lj.coulomb) => (val -> (sim.lj.coulomb = val)),
-        (label = "Lennard-Jones", range = 0:0.01:10, startvalue = sim.lj.ε) => (val -> (sim.lj.ε = val)),
-        # (label = "Stillinger-Weber", range = 0:0.01:10, startvalue = sim.lj.swstrength) => (val -> (sim.lj.swstrength = val)),
-        # (label = "covalent angle", range = 0:180, startvalue = sim.lj.swangle) => (val -> (sim.lj.swangle = val)),
-        (label = "bond strength", range = (0:0.01:10), startvalue = sim.lj.bondk) => (val -> (sim.lj.bondk = val)),
-        (label = "bond length", range = (0:0.01:2), startvalue = sim.lj.bondl) => (val -> (sim.lj.bondl = val)),
-    )
-    on.(last.(sliderconf3), getfield.(SliderGrid(settings[6,1], first.(sliderconf3)...).sliders, :value))
-    rowgap!(contents(settings[6,1])[1].layout, rowgap)
-
-    Label(settings[7, 1], halign = :left, fontsize = 20, text = "External forces", tellwidth = false)
-    sliderconf4 = (
-        (label = "gravity", range = 0:-0.01:-10, startvalue = sim.lj.g) => (val -> (sim.lj.g = val)),
-        (label = "voltage", range = (0:0.1:100).^3, startvalue = sim.lj.g) => (val -> (sim.lj.E = val)),
-        # (label = "magnetic", range = (0:0.1:100), startvalue = sim.lj.g) => (val -> (sim.lj.B = val)),
-        (label = "interactive", range = 1:1:1000, startvalue = sim.mousestrength) => (val -> (sim.mousestrength = val)),
-    )
-    on.(last.(sliderconf4), getfield.(SliderGrid(settings[8,1], first.(sliderconf4)...).sliders, :value))
-    rowgap!(contents(settings[8,1])[1].layout, rowgap)
-
-
-    Label(settings[9, 1], halign = :left, fontsize = 20, text = "Simulation Controls", tellwidth = false)
-    sliderconf5 = (
-        (label = "time step", range = logrange(1e-7, 1e-3, length = 1000), startvalue = 1e-4) => (val -> (sim.dt = val)),
-    )
-    on.(last.(sliderconf5), getfield.(SliderGrid(settings[10,1], first.(sliderconf5)...).sliders, :value))
-    rowgap!(contents(settings[10,1])[1].layout, rowgap)
-
-    rowgap!(settings, rowgap)
+function locale(lang)
+    if lang == :de
+        (; 
+            particles = "Teilchen",
+            number = "Anzahl",
+            size = "Größe",
+            thermostat = "Thermostat",
+            temperature = "Zieltemperatur",
+            tstrength = "Kopplungsstärke",
+            forces = "Kräfte",
+            coulomb = "Coulomb",
+            lennardjones = "Lennard Jones",
+            bondstrength = "Bindungsstärke",
+            bondlength = "Bindungslänge",
+            gravity = "Schwerkraft",
+            voltage = "Elektrisches Feld",
+            interactive = "Interaktiv",
+            timestep = "Zeitschritt",
+            start = "Start",
+            stop = "Stop",
+            freeze = "Einfrieren",
+            placedefault = "Platzieren: Standard",
+            placeheavy = "Platzieren: Schwer",
+            placeveryheavy = "Platzieren: Sehr schwer",
+            placepostive = "Platzieren: Positiv",
+            placenegative = "Platzieren: Negativ",
+            placepolarpair = "Platzieren: Polares Paar",
+            placeneutralpair = "Platzieren: Neutrales Paar",
+            colorpotential = "Farbe: Potential",
+            colorvelocity = "Farbe: Geschwindigkeit",
+            colorvirial = "Farbe: Druck",
+            colorcharge = "Farbe: Ladung",
+            colornothing = "Farbe: Keine",
+            presetdefault = "Preset: Standard",
+            presetrandomneutral = "Preset: Zufällige Größe",
+            presetrandomcharge = "Preset: Zufällige Ladung",
+            presetions = "Preset: Ionen",
+            presetdiatomic = "Preset: Zweiatomig",
+            presetpolar = "Preset: Polar",
+            presetchains = "Preset: Ketten",
+            presetrings = "Preset: Ringe",
+            reset = "Reset",
+            kinetic = "kinetische Energie",
+            potential = "potentielle Energie",
+            pressure = "Druck",
+            controlstext = rich(
+                rich("Linksklick: Neues Teilchen hinzufügen, Mittelklick: alle Teilchen bewegen, Rechtsklick: einzelnes Teilchen bewegen\n", fontsize = 20),
+                rich("WASD: Kraft nach oben/links/unten/rechts, Q/E: links/rechts drehen, R/F: alle erhitzen/kühlen, T/G: lokal erhitzen/kühlen, X: löschen, C: Teilchen", fontsize = 15)
+            ),
+        )
+    else
+        (; 
+            particles = "Particle",
+            number = "number",
+            size = "size",
+            thermostat = "Thermostat",
+            temperature = "target temperature",
+            tstrength = "coupling strength",
+            forces = "Forces",
+            coulomb = "Coulomb",
+            lennardjones = "Lennard Jones",
+            bondstrength = "bond strength",
+            bondlength = "bond length",
+            gravity = "gravity",
+            voltage = "voltage",
+            interactive = "interactive",
+            timestep = "time step",
+            start = "Start",
+            stop = "Stop",
+            freeze = "Freeze",
+            placedefault = "Place: default",
+            placeheavy = "Place: heavy", 
+            placeveryheavy = "Place: very heavy",
+            placepostive = "Place: positive",
+            placenegative = "Place: negative",
+            placepolarpair = "Place: polar pair",
+            placeneutralpair = "Place: neutral pair",
+            colorpotential = "Color: potential",
+            colorvelocity = "Color: velocity",
+            colorvirial = "Color: virial",
+            colorcharge = "Color: charge",
+            colornothing = "Color: nothing",
+            presetdefault = "Preset: default",
+            presetrandomneutral = "Preset: random neutral",
+            presetrandomcharge = "Preset: random charge",
+            presetions = "Preset: ions",
+            presetdiatomic = "Preset: diatomic",
+            presetpolar = "Preset: polar", 
+            presetchains = "Preset: chains", 
+            presetrings = "Preset: rings",
+            reset = "Reset",
+            kinetic = "kinetic energy",
+            potential = "potential energy",
+            pressure = "pressure",
+            controlstext = rich(
+                rich("Left click: add new particle, Middle click: move all particles, Right click: move single particle\n", fontsize = 20),
+                rich("WASD: force up/left/down/right, Q/E: rotate left/right, R/F: heat/cool all, T/G: heat/cool locally, X: delete particle, C: repel particles", fontsize = 15)
+            ),
+        )
+    end
 end
 
-function main2()
+function makesettings(gridpos, sim, loc)
+    settings = GridLayout(gridpos)
+    sliderconf = (
+        (label = loc.number, range = 1:1:1000, startvalue = length(sim.lj)) => (val -> put!(sim.events, Event(:changenumber, SA[NaN, NaN], 1.0val))),
+        (label = loc.size, range = 0.01:0.0001:0.2, startvalue = sim.lj.σ) => (val -> (sim.lj.σ = val)),
+        (label = loc.temperature, range = (0:0.001:2).^log2(10), startvalue = sim.lj.T) => val -> (sim.lj.T = val),
+        (label = loc.tstrength, range = (0:0.01:10).^3, startvalue = sim.lj.ts) => (val -> (sim.lj.ts = val)),
+        (label = loc.coulomb, range = (0:0.001:10).^2, startvalue = sim.lj.coulomb) => (val -> (sim.lj.coulomb = val)),
+        (label = loc.lennardjones, range = 0:0.01:10, startvalue = sim.lj.ε) => (val -> (sim.lj.ε = val)),
+        # (label = "Stillinger-Weber", range = 0:0.01:10, startvalue = sim.lj.swstrength) => (val -> (sim.lj.swstrength = val)),
+        # (label = "covalent angle", range = 0:180, startvalue = sim.lj.swangle) => (val -> (sim.lj.swangle = val)),
+        (label = loc.bondstrength, range = (0:0.01:10), startvalue = sim.lj.bondk) => (val -> (sim.lj.bondk = val)),
+        (label = loc.bondlength, range = (0:0.01:2), startvalue = sim.lj.bondl) => (val -> (sim.lj.bondl = val)),
+        (label = loc.gravity, range = 0:-0.01:-10, startvalue = sim.lj.g) => (val -> (sim.lj.g = val)),
+        (label = loc.voltage, range = (0:0.1:100).^3, startvalue = sim.lj.g) => (val -> (sim.lj.E = val)),
+        # (label = "magnetic", range = (0:0.1:100), startvalue = sim.lj.g) => (val -> (sim.lj.B = val)),
+        (label = loc.interactive, range = 1:1:1000, startvalue = sim.mousestrength) => (val -> (sim.mousestrength = val)),
+        (label = loc.timestep, range = logrange(1e-6, 1e-3, length = 1000), startvalue = sim.dt) => (val -> (sim.dt = val)),
+    )
+    on.(last.(sliderconf), getfield.(SliderGrid(settings[1,1], first.(sliderconf)...).sliders, :value))
+    rowgap!(contents(settings[1,1])[1].layout, 7)
+    for gap in [2, 4, 6, 8, 10, 11]
+        rowgap!(contents(settings[1,1])[1].layout, gap, 21)
+    end
+end
+
+function main(; lang = :en, history = true)
     sim = InteractiveLJ(500)
     node = Observable(sim.outlj)
     
-    fig = Figure(size = (1200, 700))
+    loc = locale(lang)
 
-    makesettings(fig[1,2][1,1], sim)
+    fig = Figure(size = (1200, 700), fontsize = 20)
+
+    makesettings(fig[1,2][1,1], sim, loc)
 
     main_axis::Axis = Axis(fig[1,1], aspect = DataAspect())
     xlims!(main_axis, -1.03, 1.03); ylims!(main_axis, -1.03, 1.03); hidedecorations!(main_axis)
@@ -398,15 +476,17 @@ function main2()
     colorrange = Observable((0.0, 1.0))
     positions = Observable(fill(SA[0.0,0.0], 1000))
     markersize = Observable(fill(node[].σ, 1000))
+    charge = Observable(fill(0, 1000))
     colorby = Observable(:potential)
+    
     function plotfunc(lj)
         N = length(lj)
         positions[][1:N] .= lj.ps
         positions[][N+1:end] .= Ref(SA[NaN, NaN])
-        notify(positions)
 
-        cs = potentialPerParticle(lj) ./ lj.σs
-        color[][1:N] .= sqrt.(cs .- minimum(cs))
+        charge[][1:N] .= round.(Int, sign.(lj.cs))
+        charge[][N+1:end] .= 0
+        notify(charge)
 
         if colorby[] == :charge
             color[][1:N] .= lj.cs
@@ -420,22 +500,31 @@ function main2()
         elseif colorby[] == :nothing
             color[][1:N] .= 0
         end
-    colorrange[] = (0.8colorrange[][1] + 0.2minimum(color[][1:N]), 0.8colorrange[][2] + 0.2maximum(color[][1:N]))
+        colorrange[] = (0.8colorrange[][1] + 0.2minimum(color[][1:N]), 0.8colorrange[][2] + 0.2maximum(color[][1:N]))
         notify(color)
 
         if any(markersize[][i] != lj.σ * lj.σs[i] for i in 1:N)
             markersize[][1:N] .= lj.σ .* lj.σs
             notify(markersize)
         end
+        notify(positions)
     end
     on(plotfunc, node) 
     node[] = sim.outlj
     colorrange[] = extrema(color[])
 
-    main_plot = scatter!(main_axis, positions, 
-        markersize = markersize, strokewidth = 1, color = color, 
+    linesegments!(main_axis, 
+        lift(lj -> lj.ps[[b[i] for b in lj.bonds for i in 1:2]], node), 
+        linewidth = lift(lj -> 50lj.σ, node), color = cgrad(:isoluminant_cm_70_c39_n256)[0.5]
+    )
+    scatter!(main_axis, positions, 
+        markersize = markersize, strokewidth = 0, color = color, 
         markerspace = :data, colormap = :isoluminant_cm_70_c39_n256, 
         colorrange = colorrange
+    )
+    scatter!(main_axis, positions, 
+        markersize = lift((ms, cs) -> ms .* ifelse.(cs .== 0, 0, ifelse.(cs .> 0, 1.1, 1.5)), markersize, charge), color = :grey10, 
+        markerspace = :data, marker = lift(cs -> getindex.((('-', 'n', '+'),), cs .+ 2), charge)
     )
     scatter!(main_axis, 
         lift(lj -> (i = clamp(sim.interactionIndex, 1, length(lj)); lj.ps[i:i]), node), 
@@ -443,55 +532,55 @@ function main2()
         color = lift(lj -> ifelse(sim.interactions[:pullsingle], :red, :transparent), node)
     )
 
+    menufontsize = 25
     menugrid = GridLayout(fig[1,2][2,1], tellwidth = false, tellheight = true, halign = :left)
-    startbutton = Button(menugrid[1,1:2], label = "Start", width = Relative(1), fontsize = 20)
-    on(Button(menugrid[1,3:4], label = "Freeze", width = Relative(1), fontsize = 20).clicks) do _
+    startbutton = Button(menugrid[1,1:2], label = loc.start, width = Relative(1), fontsize = menufontsize)
+    on(Button(menugrid[1,3:4], label = loc.freeze, width = Relative(1), fontsize = menufontsize).clicks) do _
         put!(sim.events, Event(:freeze))
     end
 
-    particlemenu = Menu(menugrid[2,1:2], width = Relative(1), fontsize = 20,
+    particlemenu = Menu(menugrid[2,1:2], width = Relative(1), fontsize = menufontsize,
         options = [
-            ("Place: default", :default),
-            ("Place: heavy", :heavy),
-            ("Place: very heavy", :veryheavy),
-            ("Place: positive", :positive),
-            ("Place: negative", :negative),
-            ("Place: polar pair", :polarpair),
-            ("Place: neutral pair", :neutralpair)
+            (loc.placedefault, :default),
+            (loc.placeheavy, :heavy),
+            (loc.placeveryheavy, :veryheavy),
+            (loc.placepostive, :positive),
+            (loc.placenegative, :negative),
+            (loc.placepolarpair, :polarpair),
+            (loc.placeneutralpair, :neutralpair)
         ]
     )
     on(x -> sim.placetype = x, particlemenu.selection)
 
-    colormenu = Menu(menugrid[2,3:4], width = Relative(1), fontsize = 20, 
+    colormenu = Menu(menugrid[2,3:4], width = Relative(1), fontsize = menufontsize, 
         options = [
-            ("Color: potential", :potential), 
-            ("Color: velocity", :velocity),
-            ("Color: virial", :virial), 
-            ("Color: charge", :charge), 
-            ("Color: nothing", :nothing)
+            (loc.colorpotential, :potential), 
+            (loc.colorvelocity, :velocity),
+            (loc.colorvirial, :virial), 
+            (loc.colorcharge, :charge), 
+            (loc.colornothing, :nothing)
         ]
     )
     on(x -> colorby[] = x, colormenu.selection)
 
-    presetmenu::Menu = Menu(menugrid[2, 5:6], width = Relative(1), fontsize = 20,
+    presetmenu::Menu = Menu(menugrid[2, 5:6], width = Relative(1), fontsize = menufontsize,
         options = [
-            ("Preset: default", :default),
-            ("Preset: random neutral", :randomneutral),
-            ("Preset: random charge", :randomcharge),
-            ("Preset: ions", :ions),
-            ("Preset: diatomic", :diatomic),
-            ("Preset: polar", :polar),
-            ("Preset: chains", :chains),
-            ("Preset: rings", :rings)
+            (loc.presetdefault, :default),
+            (loc.presetrandomneutral, :randomneutral),
+            (loc.presetrandomcharge, :randomcharge),
+            (loc.presetions, :ions),
+            (loc.presetdiatomic, :diatomic),
+            (loc.presetpolar, :polar),
+            (loc.presetchains, :chains),
+            (loc.presetrings, :rings)
         ]
     )
     on(presetmenu.selection) do sel
         sim.preset = sel
         put!(sim.events, Event(:reset))
     end
-    # colgap!(menugrid, 8, 10)
 
-    on(Button(menugrid[1,5:6], label = "Reset", width = Relative(1), fontsize = 20).clicks) do _
+    on(Button(menugrid[1,5:6], label = loc.reset, width = Relative(1), fontsize = menufontsize).clicks) do _
         put!(sim.events, Event(:reset))
     end
 
@@ -499,7 +588,7 @@ function main2()
     sps = Observable(0.0); fps = Observable(0); lastnsteps = Observable(0); nframes = Observable(0); lastframe = Observable(time_ns())
     Label(menugrid[3,5:6], halign = :right, 
         text = updateevery(lift((s, f, lj) -> "tps: $(round(Int, s))\nfps: $f\nN: $(length(lj))", sps, fps, node), 0.2), 
-        tellwidth = false, justification = :right, color = :grey60, fontsize = 10
+        tellwidth = false, justification = :right, color = :grey60, fontsize = 12
     )
     on(node) do lj
         nframes[] += 1
@@ -509,14 +598,10 @@ function main2()
         end
     end
 
-    controlstext = "Left: pull, Middle: attract all, Right: add new, W: move up, A: move left, S: move down, D: move right, Q: rotate left, E: rotate right, R: heat all, F: cool all, T: heat local, G: cool local, X: delete, C: repel"
-    Label(menugrid[3,1:4], controlstext, justification = :left, halign = :left, color = :grey60, padding = (0,0,0,0), fontsize = 10, word_wrap = true)
-    controlstext = ""
-    # Label(menugrid[4,:], controlstext, justification = :right, halign = :left, color = :grey60, padding = (0,0,0,0), fontsize = 10)
+    Label(menugrid[3,1:5], loc.controlstext, justification = :left, halign = :left, color = :grey60, padding = (0,0,0,0))
     rowgap!(menugrid, 1, 15)
-
         
-    begin
+    if history
         plotgrid = GridLayout(fig[1,2][3,1], alignmode = Outside())
         rowgap!(plotgrid, 5)
         mcolor = cgrad(:isoluminant_cm_70_c39_n256)[1.0]
@@ -526,12 +611,12 @@ function main2()
         xlims!(axis, -1.02histsteps, 0.02histsteps)
         
         temperatures = Observable(fill(NaN, histsteps))
-        lines!(axis, -histsteps+1:1:0, temperatures, color = Makie.wong_colors()[1], label = "Kinetische Energie")
+        lines!(axis, -histsteps+1:1:0, temperatures, color = Makie.wong_colors()[1], label = loc.kinetic)
         potentials = Observable(fill(NaN, histsteps))
-        lines!(axis, -histsteps+1:1:0, potentials, color = Makie.wong_colors()[2], label = "Potenzielle Energie")
+        lines!(axis, -histsteps+1:1:0, potentials, color = Makie.wong_colors()[2], label = loc.potential)
         pressures = Observable(fill(NaN, histsteps))
-        lines!(axis, -histsteps+1:1:0, pressures, color = Makie.wong_colors()[3], label = "Druck")
-        Legend(plotgrid[2,1], axis, position = :lt, orientation = :horizontal, framevisible = false, tellwidth = false)
+        lines!(axis, -histsteps+1:1:0, pressures, color = Makie.wong_colors()[3], label = loc.pressure)
+        Legend(plotgrid[2,1], axis, position = :lt, orientation = :horizontal, framevisible = false, tellwidth = false, fontsize = 20)
 
         function updatePlots(lj)
             T = temperature(lj)
@@ -540,7 +625,7 @@ function main2()
                 temperatures[][end] = T
                 notify(temperatures)
             end
-            V = potential(lj)
+            V = potential(lj) + 3
             if V != potentials[][end] 
                 potentials[][1:end-1] .= potentials[][2:end]
                 potentials[][end] = V
@@ -554,9 +639,6 @@ function main2()
             end
             
             reset_limits!(axis)
-            # ylims!(temperature_axis, paddedextrema(temperatures[], rpad = 0.12, apad = 0.0012))
-            # ylims!(potential_axis, paddedextrema(potentials[], rpad = 0.12, apad = 0.0012))
-            # ylims!(pressure_axis, paddedextrema(pressures[], rpad = 0.12, apad = 0.0012))
         end    
         on(updatePlots, node)
         
@@ -566,32 +648,47 @@ function main2()
             temperatures[] .= NaN; 
             pressures[] .= NaN; 
         end
+    else
+        plotgrid = GridLayout(fig[1,2][3,1], alignmode = Outside())
     end
 
 
-    on(events(main_axis).mousebutton) do event
-        if event.button == Mouse.left && event.action == Mouse.press
-            sim.interactionIndex = argmin(norm.(sim.outlj.ps .- (mouseposition(main_axis),)))
+    on(events(fig).mouseposition, priority = 1) do event
+        sim.mouseposition = SVector{2, Float64}(mouseposition(main_axis))
+    end
+
+    on(events(fig).mousebutton, priority = 10) do event
+       if event.button == Mouse.right && event.action == Mouse.press && is_mouseinside(main_axis)
+            put!(sim.events, Event(:setindex))
         end
+        map(keymap) do (name, key)
+            if key isa Mouse.Button && (is_mouseinside(main_axis) || sim.interactions[name])
+                sim.interactions[name] = ispressed(fig, key)
+            end
+        end
+        return Consume(is_mouseinside(main_axis))
     end
 
-    function renderfunc(x)
-        node[] = sim.outlj
-        for (name, key) in keymap
-            if key isa Keyboard.Button || is_mouseinside(main_axis) || sim.interactions[name]
+    on(events(fig).keyboardbutton, priority = 1) do event
+        map(keymap) do (name, key)
+            if key isa Keyboard.Button
                 sim.interactions[name] = ispressed(main_axis, key)
             end
         end
-        sim.mouseposition = SVector{2, Float64}(mouseposition(main_axis))
+    end
+
+
+    function renderfunc(x)
+        node[] = sim.outlj
     end
 
     on(startbutton.clicks) do n
         sim.running = !sim.running
-        startbutton.label = sim.running ? "Stop" : "Start"
+        startbutton.label = sim.running ? loc.stop : loc.start
     end
+    screen::GLMakie.Screen{GLMakie.GLFW.Window} = GLMakie.Screen(renderloop = GLMakie.renderloop, framerate = 60.0, vsync = false, render_on_demand = true)
+    on(renderfunc, events(fig).tick)
 
-    screen::GLMakie.Screen{GLMakie.GLFW.Window} = GLMakie.Screen(renderloop = GLMakie.fps_renderloop, framerate = 60)
-    on(renderfunc, screen.render_tick)
     on(screen.window_open) do val
         if !val
             stop(sim)
@@ -601,493 +698,7 @@ function main2()
     display(screen, fig)
     GLMakie.GLFW.SetWindowPos(screen.glscreen, 0, 0)
     start(sim)
+    
     screen
 end
 
-
-function main(; decorated = true)
-    lj = LJ(500)
-    step!(lj, dt = 0.0)
-    node = Observable(lj)
-
-    lk = ReentrantLock()
-
-    fig = Figure(size = (decorated ? (1200,800) : primary_resolution() .* 2 .÷ 3), figure_padding = 20)
-
-    rightarea = fig[1,2] = GridLayout()
-    colsize!(fig.layout, 1, Aspect(1, 1.0))
-
-
-    # settings
-    begin 
-        function setnumber(val)
-            lock(lk) do 
-                while length(lj) > val
-                    deleteat!(lj, length(lj))
-                end
-                pushfree!(lj, val - length(lj))
-                node[] = ensureNeighbors!(deepcopy(lj))
-            end
-        end
-
-        dt = Observable(1e-4)
-        mousestrength = Observable(500)
-        numberofatoms = Observable(length(lj))
-
-        settings = GridLayout(rightarea[1,1])
-        rowgap = 7
-
-        Label(settings[1, 1], halign = :left, fontsize = 20, text = "Particle settings", tellwidth = false)
-        sliderconf1 = (
-            (label = "number", range = 1:1:1000, startvalue = length(lj)) => (val -> (numberofatoms[] = val; setnumber(val))),
-            (label = "size", range = 0.01:0.0001:0.2, startvalue = lj.σ) => (val -> (lj.σ = val)),
-        )
-        on.(last.(sliderconf1), getfield.(SliderGrid(settings[2,1], first.(sliderconf1)...).sliders, :value))
-        sizeslider::Slider = contents(settings[2,1])[1].sliders[2]
-        rowgap!(contents(settings[2,1])[1].layout, rowgap)
-
-        Label(settings[3, 1], halign = :left, fontsize = 20, text = "Thermostat settings", tellwidth = false)
-        sliderconf2 = (
-            (label = "temperature", range = (0:0.001:2).^log2(10), startvalue = lj.T) => val -> (lj.T = val),
-            (label = "strength", range = (0:0.01:10).^3, startvalue = lj.ts) => (val -> (lj.ts = val)),
-        )
-        on.(last.(sliderconf2), getfield.(SliderGrid(settings[4,1], first.(sliderconf2)...).sliders, :value))
-        rowgap!(contents(settings[4,1])[1].layout, rowgap)
-
-        Label(settings[5, 1], halign = :left, fontsize = 20, text = "Internal forces", tellwidth = false)
-        sliderconf3 = (
-            (label = "Coulomb", range = (0:0.001:10).^2, startvalue = lj.coulomb) => (val -> (lj.coulomb = val)),
-            (label = "Lennard-Jones", range = 0:0.01:10, startvalue = lj.ε) => (val -> (lj.ε = val)),
-            # (label = "Stillinger-Weber", range = 0:0.01:10, startvalue = lj.swstrength) => (val -> (lj.swstrength = val)),
-            # (label = "covalent angle", range = 0:180, startvalue = lj.swangle) => (val -> (lj.swangle = val)),
-            (label = "bond strength", range = (0:0.01:10), startvalue = lj.bondk) => (val -> (lj.bondk = val)),
-            (label = "bond length", range = (0:0.01:2), startvalue = lj.bondl) => (val -> (lj.bondl = val)),
-        )
-        on.(last.(sliderconf3), getfield.(SliderGrid(settings[6,1], first.(sliderconf3)...).sliders, :value))
-        rowgap!(contents(settings[6,1])[1].layout, rowgap)
-
-        Label(settings[7, 1], halign = :left, fontsize = 20, text = "External forces", tellwidth = false)
-        sliderconf4 = (
-            (label = "gravity", range = 0:-0.01:-10, startvalue = lj.g) => (val -> (lj.g = val)),
-            (label = "voltage", range = (0:0.1:100).^3, startvalue = lj.g) => (val -> (lj.E = val)),
-            # (label = "magnetic", range = (0:0.1:100), startvalue = lj.g) => (val -> (lj.B = val)),
-            (label = "interactive", range = 1:1:1000, startvalue = mousestrength[]) => (val -> (mousestrength[] = val)),
-        )
-        on.(last.(sliderconf4), getfield.(SliderGrid(settings[8,1], first.(sliderconf4)...).sliders, :value))
-        rowgap!(contents(settings[8,1])[1].layout, rowgap)
-
-
-        Label(settings[9, 1], halign = :left, fontsize = 20, text = "Simulation Controls", tellwidth = false)
-        sliderconf5 = (
-            (label = "time step", range = logrange(1e-7, 1e-3, length = 1000), startvalue = 1e-4) => (val -> (dt[] = val)),
-        )
-        on.(last.(sliderconf5), getfield.(SliderGrid(settings[10,1], first.(sliderconf5)...).sliders, :value))
-        rowgap!(contents(settings[10,1])[1].layout, rowgap)
-
-        rowgap!(settings, rowgap)
-    end
-
-
-    # buttons
-    begin
-        menugrid = rightarea[2,1] = GridLayout(tellwidth = false, halign = :left)
-    
-        startbutton::Button = Button(menugrid[1,1:2], label = "Start", width = Relative(1), fontsize = 20)
-        on(n -> lock(() -> lj.vs .*= 0, lk), Button(menugrid[1,3:4], label = "Freeze", width = Relative(1), fontsize = 20).clicks)
-
-        # Label(menugrid[2,1], "   place:", fontsize = 20, halign = :right, justification = :right, tellwidth = false)
-        particlemenu::Menu = Menu(menugrid[2,1:2], options = ["Place: default", "Place: heavy", "Place: very heavy", "Place: positive", "Place: negative", "Place: polar pair", "Place: neutral pair"], width = Relative(1), fontsize = 20)
-        # colgap!(menugrid, 4, 10)
-        
-        # Label(menugrid[2,3], " Color:", fontsize = 20, halign = :right, justification = :right, tellwidth = false)
-        colormenu::Menu = Menu(menugrid[2,3:4], options = ["Color: potential", "Color: velocity", "Color: virial", "Color: charge", "Color: nothing"], width = Relative(1), fontsize = 20)
-        # colgap!(menugrid, 6, 10)
-
-        options = [
-            ("Preset: default", N -> pushfree!(lj, N)),
-            ("Preset: random neutral", N -> for i in 1:N 
-                m = (rand() + 1) / 2
-                pushfree!(lj, 1, ms = [m], σs = [sqrt(m)])
-            end),
-            ("Preset: random charge", N -> for i in 1:N 
-                m = (rand() + 1) / 2
-                pushfree!(lj, 1, ms = [m], σs = [sqrt(m)], cs = [2rand()-1])
-            end),
-            ("Preset: ions", N -> for i in 1:N pushfree!(lj, cs = [-sign(sum(lj.cs) - 1e-10)]) end),
-            ("Preset: diatomic", N -> pushfree!(lj, N ÷ 2, 
-                ps = [SA[lj.bondl * 0.05, 0.0], SA[0.0, 0.0]], 
-                bonds = [(1, 2, 10000.0, 0.05)]
-            )),
-            ("Preset: polar", N -> pushfree!(lj, N ÷ 2, 
-                ps = [SA[lj.bondl * 0.05, 0.0], SA[0.0, 0.0]], 
-                cs = [1.0, -1.0], bonds = [(1, 2, 10000.0, 0.05)]
-            )),
-            # ("Preset: water", N -> pushfree!(lj, N ÷ 2, 
-            #     σs = [1, 0.35, 0.35], ms = [16, 1, 1], cs = [1.0, -0.5, -0.5], 
-            #     ps = [SA[0.0, 0.0], lj.bondl * 0.05 * SA[1.0, 0.0], lj.bondl * 0.05 * SA[cosd(120), sind(120)]], 
-            #     bonds = [(1, 2, 10000.0, 0.05), (1, 3, 10000.0, 0.05)],
-            #     angles = [(1, 2, 3, 10, 120)]
-            # )),
-            ("Preset: chains", N -> pushfree!(lj, N ÷ 5, 
-                ps = [SA[i * lj.bondl * 0.05, 0.0] for i in 1:5], 
-                bonds = [(1, 2, 10000.0, 0.05), (2, 3, 10000.0, 0.05), (3, 4, 10000.0, 0.05), (4, 5, 10000.0, 0.05)], 
-                angles = [(2, 1, 3, 10, 180), (3, 2, 4, 10, 180), (4, 3, 5, 10, 180)]
-            )),
-            ("Preset: rings", N -> pushfree!(lj, N ÷ 6, 
-                ps = [lj.bondl * 0.05 * SA[cos(ϕ), sin(ϕ)] for ϕ in 0:2pi/6:6], 
-                bonds = [(1, 2, 10000.0, 0.05), (2, 3, 10000.0, 0.05), (3, 4, 10000.0, 0.05), 
-                         (4, 5, 10000.0, 0.05), (5, 6, 10000.0, 0.05), (6, 1, 10000.0, 0.05)],
-                angles = [(2, 1, 3, 10, 180), (3, 2, 4, 10, 180), (4, 3, 5, 10, 180), 
-                          (5, 4, 6, 10, 180), (6, 5, 1, 10, 180), (1, 6, 2, 10, 180)]
-            )),
-        ]
-        # Label(menugrid[2, 5], "  Presets:", fontsize = 20, halign = :right, justification = :right, tellwidth = false)
-        presetmenu::Menu = Menu(menugrid[2, 5:6], options = options, width = Relative(1), fontsize = 20)
-        on(presetmenu.selection) do func
-            lock(lk) do 
-                N = numberofatoms[]; empty!(lj)
-                func(N)
-                node[] = ensureNeighbors!(deepcopy(lj))
-            end
-        end
-        # colgap!(menugrid, 8, 10)
-
-        on(Button(menugrid[1,5:6], label = "Reset", width = Relative(1), fontsize = 20).clicks) do _
-            notify(presetmenu.selection)
-        end
-
-
-        sps = Observable(0.0); fps = Observable(0); lastnsteps = Observable(0); nframes = Observable(0); lastframe = Observable(time_ns())
-        Label(menugrid[3,5:6], halign = :right, text = lift((s, f, lj) -> "tps: $(round(Int, s))\nfps: $f\nN: $(length(lj))", sps, fps, node), tellwidth = false, justification = :right, color = :grey60, fontsize = 10)
-        on(node) do lj
-            nframes[] += 1
-            if time_ns() - lastframe[] > 1e9
-                sps[] = (lj.nsteps - lastnsteps[]) / (time_ns() - lastframe[]) * 1e9
-                lastnsteps[] = lj.nsteps; fps[] = nframes[]; nframes[] = 0; lastframe[] = time_ns()
-            end
-        end
-
-        controlstext = "Left: pull, Middle: attract all, Right: add new, W: move up, A: move left, S: move down, D: move right, Q: rotate left, E: rotate right, R: heat all, F: cool all, T: heat local, G: cool local, X: delete, C: repel"
-        Label(menugrid[3,1:4], controlstext, justification = :left, halign = :left, color = :grey60, padding = (0,0,0,0), fontsize = 10, word_wrap = true)
-        controlstext = ""
-        # Label(menugrid[4,:], controlstext, justification = :right, halign = :left, color = :grey60, padding = (0,0,0,0), fontsize = 10)
-        rowgap!(menugrid, 1, 15)
-    end
-
-
-    # plots
-    begin
-        plotgrid = GridLayout(rightarea[3,1], alignmode = Outside())
-
-        mcolor = cgrad(:isoluminant_cm_70_c39_n256)[1.0]
-
-        histsteps = 1001
-        Label(plotgrid[1, 1], "Temperature", rotation = pi/2, tellheight = false, fontsize = 15)
-        temperatures = Observable(fill(NaN, histsteps))
-        temperature_axis::Axis = Axis(plotgrid[1,2], ylabelsize = 20)
-        xlims!(temperature_axis, -1.02histsteps, 0.02histsteps)
-        lines!(temperature_axis, -histsteps+1:1:0, temperatures)
-
-        Label(plotgrid[2, 1], "Potential", rotation = pi/2, tellheight = false, fontsize = 15)
-        potentials = Observable(fill(NaN, histsteps))
-        potential_axis::Axis = Axis(plotgrid[2,2], ylabelsize = 20)
-        xlims!(potential_axis, -1.02histsteps, 0.02histsteps)
-        lines!(potential_axis, -histsteps+1:1:0, potentials)
-
-        Label(plotgrid[3, 1], "Pressure", rotation = pi/2, tellheight = false, fontsize = 15)
-        pressures = Observable(fill(NaN, histsteps))
-        pressure_axis::Axis = Axis(plotgrid[3,2], ylabelsize = 20)
-        xlims!(pressure_axis, -1.02histsteps, 0.02histsteps)
-        lines!(pressure_axis, -histsteps+1:1:0, pressures)
-
-        # lines!(temperature_axis, -histsteps+1:1:0, lift(x -> imfilter(x, KernelFactors.gaussian(10)), temperatures), linewidth = 2, color = mcolor)
-        # lines!(potential_axis, -histsteps+1:1:0, lift(x -> imfilter(x, KernelFactors.gaussian(10)), potentials), linewidth = 2, color = mcolor)
-        # lines!(pressure_axis, -histsteps+1:1:0, lift(x -> imfilter(x, KernelFactors.gaussian(10)), pressures), linewidth = 2, color = mcolor)
-
-        # Label(plotgrid[4, 1], "Number of neighbors", rotation = pi/2, tellheight = false, fontsize = 15)
-        # nneighbors = lift(node) do lj
-        #     nbs = [(i,j) for (i,j) in lj.nbs if i != 0 && j != 0 && norm(lj.ps[i] - lj.ps[j]) < 1.5lj.σ]
-        #     nbs = [first.(nbs); last.(nbs)]
-        #     count.(isequal.(1:length(lj)), Ref(nbs))
-        # end
-        # neighbor_axis::Axis = Axis(plotgrid[4,2], xticks = 0:10, yticks = 0:0.2:1, ylabelsize = 15)
-        # hist!(neighbor_axis, nneighbors, bins = -0.5:1:11, normalization = :probability)
-        # hlines!(neighbor_axis, 0.4, color = :transparent)
-
-        # Label(plotgrid[5, 1], "Distance distribution", rotation = pi/2, tellheight = false, fontsize = 15)
-        # distances = lift(lj -> [norm(lj.ps[i] - lj.ps[j]) / lj.σ for (i, j) in lj.nbs if i != 0 && j != 0], node)
-        # distance_axis::Axis = Axis(plotgrid[5,2], xticks = MultiplesTicks(6, 1, "σ"), ylabelsize = 20)
-        # hist!(distance_axis, distances, bins = 0:0.05:5, normalization = :probability)
-        # hlines!(distance_axis, 0.15, color = :transparent)
-
-        colgap!(plotgrid, 1, 10)
-
-        function updatePlots!(lj)
-            T = temperature(lj)
-            if T != temperatures[][end]
-                temperatures[][1:end-1] .= temperatures[][2:end]
-                temperatures[][end] = T
-                notify(temperatures)
-            end
-            V = potential(lj)
-            if V != potentials[][end] 
-                potentials[][1:end-1] .= potentials[][2:end]
-                potentials[][end] = V
-                notify(potentials)
-            end
-            P = T / 4 + virial(lj) / 8 / length(lj)
-            if P != pressures[][end]
-                pressures[][1:end-1] .= pressures[][2:end]
-                pressures[][end] = P#isnan(pressures[][end]) ? P : 0.99pressures[][end] + 0.01P
-                notify(pressures)
-            end
-            
-            ylims!(temperature_axis, paddedextrema(temperatures[], rpad = 0.12, apad = 0.0012))
-            ylims!(potential_axis, paddedextrema(potentials[], rpad = 0.12, apad = 0.0012))
-            ylims!(pressure_axis, paddedextrema(pressures[], rpad = 0.12, apad = 0.0012))
-            # autolimits!(neighbor_axis); 
-            # autolimits!(distance_axis)
-        end    
-        on(updatePlots!, node)
-        
-        remove_interactions!(temperature_axis); remove_interactions!(potential_axis); 
-        # remove_interactions!(neighbor_axis); remove_interactions!(distance_axis); 
-
-        function resethistory(event)
-            potentials[] .= NaN; 
-            temperatures[] .= NaN; 
-            pressures[] .= NaN; 
-        end        
-        onmouseleftdown(resethistory, temperature_axis.mouseeventhandle)
-        onmouseleftdown(resethistory, potential_axis.mouseeventhandle)
-        onmouseleftdown(resethistory, pressure_axis.mouseeventhandle)
-    end
-
-    
-    # main plot
-    begin
-        main_axis::Axis = Axis(fig[1,1], aspect = DataAspect())
-        xlims!(main_axis, -1.03, 1.03); ylims!(main_axis, -1.03, 1.03); hidedecorations!(main_axis)
-        remove_interactions!(main_axis)
-
-        maxN = 1000
-        color = Observable(zeros(maxN))
-        colorrange = Observable((0.0, 1.0))
-        pnode = Observable(fill(SA[0.0,0.0], maxN))
-        markersize = Observable(fill(lj.σ, 1000))
-
-        function plotfunc(lj)
-            N = length(lj)
-            pnode[][1:N] .= lj.ps
-            pnode[][N+1:end] .= Ref(SA[NaN, NaN])
-            notify(pnode)
-
-            if colormenu.selection[] == "Color: charge"
-                color[][1:N] .= lj.cs
-            elseif colormenu.selection[] == "Color: velocity"
-                color[][1:N] .= 0.5 .* color[][1:N] .+ 0.5 .* norm.(lj.vs)
-            elseif colormenu.selection[] == "Color: potential"
-                cs = potentialPerParticle(lj) ./ lj.σs
-                color[][1:N] .= sqrt.(cs .- minimum(cs))
-            elseif colormenu.selection[] == "Color: virial"
-                color[][1:N] .= ssqrt.(virialPerParticle(lj))
-            elseif colormenu.selection[] == "Color: nothing"
-                color[][1:N] .= 0
-            end
-            # if colormenu.selection[] == "virial"
-            #     colorrange[] = (0.8colorrange[][1] - 0.2maximum(abs, color[][1:N]), 0.8colorrange[][2] + 0.2maximum(abs, color[][1:N]))
-            # else
-            colorrange[] = (0.8colorrange[][1] + 0.2minimum(color[][1:N]), 0.8colorrange[][2] + 0.2maximum(color[][1:N]))
-            # end
-            notify(color)
-
-            if any(markersize[][i] != lj.σ * lj.σs[i] for i in 1:N)
-                markersize[][1:N] .= lj.σ .* lj.σs
-                notify(markersize)
-            end
-        end
-        on(plotfunc, node) 
-        node[] = ensureNeighbors!(deepcopy(lj))
-        colorrange[] = extrema(color[])
-
-        linesegments!(main_axis, lift(lj -> lj.ps[[b[i] for b in lj.bonds for i in 1:2]], node), linewidth = lift(lj -> 0.1lj.σ, node), color = :grey)
-        main_plot::Scatter{Tuple{Vector{Point{2, Float64}}}} = scatter!(main_axis, pnode, markersize = markersize, strokewidth = 1, color = color, markerspace = :data, colormap = :isoluminant_cm_70_c39_n256, colorrange = colorrange)
-    end
-
-
-    # interactions
-    begin
-        keymap = (
-            :pullsingle => Mouse.left, :pullall => Mouse.middle, :pushall => Keyboard.c,
-            :spawn => Mouse.right, :delete => Keyboard.x, 
-            :stirleft => Keyboard.q, :stirright => Keyboard.e,
-            :pushleft => Keyboard.a, :pushright => Keyboard.d,
-            :pushup => Keyboard.w, :pushdown => Keyboard.s,
-            :cool => Keyboard.g, :coolall => Keyboard.f, 
-            :heat => Keyboard.t,  :heatall => Keyboard.r, 
-        )
-        interactions = Dict(first.(keymap) .=> false)
-        function handleInteractions!(lj, interactions, index, mousepos, strength, dt)
-            if interactions[:pullsingle] && index <= length(lj)
-                lj.vs[index] += 200 * dt * (mousepos - lj.ps[index]) / lj.ms[index]
-            end
-            if interactions[:pullall]
-                lj.vs .+= 0.04strength * dt .* (Ref(mousepos) .- lj.ps) ./ (0.05 .+ norm.(Ref(mousepos) .- lj.ps)).^2 ./ lj.ms
-                lj.vs .*= 1 .- (0.1strength * dt) .* exp.(-10 .* norm.(lj.ps .- Ref(mousepos)).^2)
-            end
-            if interactions[:pushall]
-                lj.vs .+= 30strength * dt .* exp.(-200 .* norm.(lj.ps .- Ref(mousepos)).^2) .* (lj.ps .- Ref(mousepos)) ./ lj.ms
-            end
-            if interactions[:cool]
-                lj.vs .*= max.(0, 1 .- (0.2strength * dt) .* exp.(-100 .* norm.(lj.ps .- Ref(mousepos)).^2))
-            end
-            if interactions[:coolall]
-                lj.vs .*= max.(0, 1 .- (0.05strength * dt))
-            end
-            if interactions[:heat]
-                lj.vs .+= 2strength * dt .* exp.(-100 .* norm.(lj.ps .- Ref(mousepos)).^2) .* randn.(SVec2) ./ lj.ms
-            end
-            if interactions[:heatall]
-                lj.vs .+= 1strength * dt .* randn.(SVec2) ./ lj.ms
-            end
-            if interactions[:stirleft]
-                lj.vs .+= strength / 5 * dt .* exp.(-20 .* norm.(lj.ps .- Ref(mousepos)).^2) .* Ref(SA[0.7 1; -1 0.7]) .* (Ref(mousepos) .- lj.ps) ./ lj.ms
-            end
-            if interactions[:stirright]
-                lj.vs .+= strength / 5 * dt .* exp.(-20 .* norm.(lj.ps .- Ref(mousepos)).^2) .* Ref(SA[0.7 -1; 1 0.7]) .* (Ref(mousepos) .- lj.ps) ./ lj.ms
-            end
-            for (i, dir) in zip((:pushleft, :pushright, :pushup, :pushdown), (SA[-1, 0], SA[1, 0], SA[0, 1], SA[0, -1]))
-                if interactions[i]
-                    lj.vs .+= 0.05strength .* dt .* Ref(dir) ./ lj.ms
-                end
-            end
-        end
-        function updateInteractions!(interactions, keymap, axis)
-            for (name, key) in keymap
-                if key isa Keyboard.Button || is_mouseinside(axis) || interactions[name]
-                    interactions[name] = ispressed(axis, key)
-                end
-            end
-        end
-        
-        mousepos = Observable(SA[0.0,0.0])
-        interactionIndex = Observable(1)
-        on(events(main_axis).mousebutton) do event
-            if event.button == Mouse.left && event.action == Mouse.press
-                interactionIndex[] = argmin(norm.(lj.ps .- Ref(mouseposition(main_axis))))
-            end
-        end
-        scatter!(main_axis, 
-            lift(lj -> (i = clamp(interactionIndex[], 1, length(lj)); lj.ps[i:i]), node), 
-            markersize = lift(lj -> 1.05lj.σ, node), markerspace = :data, 
-            color = lift(lj -> ifelse(interactions[:pullsingle], :red, :transparent), node)
-        )
-
-        scrollnode = Observable(0.0)
-        on(updateevery(scrollnode, 0.05)) do val
-            set_close_to!(sizeslider, sizeslider.value[] + val)
-            scrollnode.val = 0.0
-        end 
-        register_interaction!(main_axis, :scroll) do event::ScrollEvent, axis
-            lj.σ += 0.0001event.y
-            scrollnode[] += 0.0001event.y
-        end
-    end
-
-
-    # threads
-    running = Observable(false)
-    function runfunc()
-        while true
-            try
-                for _ in 1:50
-                    @lock lk begin 
-                        step!(lj, dt = dt[])
-                        vrescale!(lj, dt = dt[])
-                        handleInteractions!(lj, interactions, interactionIndex[], mousepos[], mousestrength[], dt[])
-                    end
-                end
-                sleep(1e-3)
-                if !running[]
-                    return
-                end
-            catch e
-                running[] = false
-                rethrow(e)
-            end
-        end
-    end
-        
-    lastaction = Observable(time())
-
-    function renderfunc(x)
-        # length(lj) == 0 && return
-
-        node[] = ensureNeighbors!(lock(() -> deepcopy(lj), lk), forced = false)
-
-        updateInteractions!(interactions, keymap, main_axis)
-        mousepos[] = SVec2(mouseposition(main_axis))
-        
-        if time() - lastaction[] > 0.05
-            if interactions[:spawn] && is_mouseinside(main_axis)
-                p = mousepos[]
-                lock(lk) do 
-                    if length(lj) < maxN && minimum(norm.(Ref(p) .- lj.ps)) > lj.σ
-                        s = particlemenu.selection[]
-                        if s == "Place: default"
-                            push!(lj, ps = [p])
-                        elseif s == "Place: positive"
-                            push!(lj, ps = [p], cs = [1])
-                        elseif s == "Place: negative"
-                            push!(lj, ps = [p], cs = [-1])
-                        elseif s == "Place: heavy" && minimum(norm.(Ref(p) .- lj.ps)) > sqrt(10) * lj.σ
-                            push!(lj, ps = [p], ms = [100], σs = [sqrt(10)])
-                        elseif s == "Place: very heavy" && minimum(norm.(Ref(p) .- lj.ps)) > sqrt(10) * lj.σ
-                            push!(lj, ps = [p], ms = [10000], σs = [sqrt(10)])
-                        elseif s == "Place: polar pair" && length(lj) < maxN - 1
-                            d = normalize(randn(SVec2)) * lj.σ / 2
-                            push!(lj, ps = [p + d, p - d], cs = [-0.3, 0.3], ms = [2, 2], bonds = [(1, 2, 10000.0, 0.05)])
-                        elseif s == "Place: neutral pair" && length(lj) < maxN - 1
-                            d = normalize(randn(SVec2)) * lj.σ / 2
-                            push!(lj, ps = [p + d, p - d], cs = [0, 0], ms = [2, 2], bonds = [(1, 2, 10000.0, 0.05)])
-                        end
-                    end
-                end
-                lastaction[] = time()
-            end
-            if interactions[:delete] && length(lj) > 1
-                lock(lk) do 
-                    deleteat!(lj, argmin(norm.(lj.ps .- Ref(mousepos[]))))
-                end
-                lastaction[] = time()
-            end
-        end
-
-        if !running[] || !events(fig).window_open[]
-            running[] = false
-            startbutton.label = "Start"
-        end
-    end
-    
-    screen::GLMakie.Screen{GLMakie.GLFW.Window} = GLMakie.Screen(renderloop = GLMakie.renderloop, framerate = 60, decorated = decorated)
-    on(renderfunc, screen.render_tick)
-
-    on(screen.window_open) do val
-        if !val
-            running[] = false
-        end
-    end
-
-    on(startbutton.clicks) do n
-        running[] = !running[]
-        startbutton.label = ifelse(running[], "Stop", "Start")
-        if running[]
-            Threads.@spawn runfunc()
-        end
-    end
-
-    display(screen, fig)
-    !decorated && GLMakie.GLFW.SetWindowPos(screen.glscreen, 0, 0)
-
-    fig, main_plot, node, screen, runfunc, renderfunc
-end

@@ -6,6 +6,8 @@ s = ArgParseSettings()
         action = :store_true
     "--borderless", "-b"
         action = :store_true
+    "--nhistory", "-n"
+        action = :store_true
 end
 args = parse_args(s)
 
@@ -13,6 +15,5 @@ if args["darktheme"]
     LennardJones.darktheme!()
 end
 
-# fig, plt, node, screen = LennardJones.main(decorated = !args["borderless"])
-screen = LennardJones.main2()
+screen = LennardJones.main(lang = :de, history = !args["nhistory"])
 wait(screen)
